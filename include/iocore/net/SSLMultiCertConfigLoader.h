@@ -51,7 +51,7 @@ public:
   SSLMultiCertConfigLoader(const SSLConfigParams *p) : _params(p) {}
   virtual ~SSLMultiCertConfigLoader(){};
 
-  swoc::Errata load(SSLCertLookup *lookup);
+  swoc::Errata load(SSLCertLookup *lookup, bool firstLoad);
 
   virtual SSL_CTX *default_server_ssl_ctx();
 

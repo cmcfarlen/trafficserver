@@ -778,7 +778,7 @@ SSLCertificateConfig::reconfigure()
     ink_hrtime_sleep(HRTIME_SECONDS(secs));
   }
 
-  auto errata = SSLMultiCertConfigLoader(params).load(lookup);
+  auto errata = SSLMultiCertConfigLoader(params).load(lookup, configid == 0);
   if (!lookup->is_valid || (errata.has_severity() && errata.severity() >= ERRATA_ERROR)) {
     retStatus = false;
   }

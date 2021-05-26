@@ -1960,7 +1960,7 @@ SSLMultiCertConfigLoader::_load_lines(SSLCertLookup *lookup, SSLConfigLines::con
 }
 
 swoc::Errata
-SSLMultiCertConfigLoader::load(SSLCertLookup *lookup)
+SSLMultiCertConfigLoader::load(SSLCertLookup *lookup, bool firstLoad)
 {
   const SSLConfigParams *params = this->_params;
 
@@ -2010,7 +2010,9 @@ SSLMultiCertConfigLoader::load(SSLCertLookup *lookup)
 
   // Process all the lines if we're not running parallelization on multiple threads
   if (params->configLoadConcurrency > 0) {
-    std::size_t bucket_size = std::max(1u, static_cast<unsigned>(single_lines.size() / params->configLoadConcurrency));
+    int num_threads = firstLoad ? std::max(static_cast<int>(std::thread::hardware_concurrency()), params->configLoadConcurrency) :
+                                  params->configLoadConcurrency;
+    std::size_t bucket_size                = std::max(1u, static_cast<unsigned>(single_lines.size() / num_threads));
     SSLConfigLines::const_iterator current = std::as_const(single_lines).begin();
     std::list<std::thread> threads;
     std::size_t num_lines = single_lines.size();
