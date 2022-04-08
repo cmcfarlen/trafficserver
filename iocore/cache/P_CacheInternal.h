@@ -780,6 +780,9 @@ Vol::close_write(CacheVC *cont)
 TS_INLINE int
 Vol::open_write(CacheVC *cont, int allow_if_writers, int max_writers)
 {
+  if (cont->info == (CacheHTTPInfo *)CACHE_PRETEND_TO_FAIL) {
+    return ECACHE_WRITE_FAIL;
+  }
   Vol *vol       = this;
   bool agg_error = false;
   if (!cont->f.remove) {

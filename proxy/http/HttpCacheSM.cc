@@ -367,10 +367,17 @@ HttpCacheSM::open_write(const HttpCacheKey *key, URL *url, HTTPHdr *request, Cac
     return ACTION_RESULT_DONE;
   }
 
-  Action *action_handle =
-    cacheProcessor.open_write(this, 0, key, request,
-                              // INKqa11166
-                              allow_multiple ? (CacheHTTPInfo *)CACHE_ALLOW_MULTIPLE_WRITES : old_info, pin_in_cache);
+  HTTPInfo *resolved_info = allow_multiple ? (CacheHTTPInfo *)CACHE_ALLOW_MULTIPLE_WRITES : old_info;
+
+  if (is_action_tag_set("http_pfailcache")) {
+    if (request->presence(MIME_PRESENCE_CACHE_CONTROL)) {
+      resolved_info = (CacheHTTPInfo *)CACHE_PRETEND_TO_FAIL;
+    }
+  }
+
+  Action *action_handle = cacheProcessor.open_write(this, 0, key, request,
+                                                    // INKqa11166
+                                                    resolved_info, pin_in_cache);
 
   if (action_handle != ACTION_RESULT_DONE) {
     pending_action = action_handle;

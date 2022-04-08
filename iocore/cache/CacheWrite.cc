@@ -1780,7 +1780,7 @@ Cache::open_write(Continuation *cont, const CacheKey *key, CacheHTTPInfo *info, 
   c->vol          = key_to_vol(key, hostname, host_len);
   Vol *vol        = c->vol;
   c->info         = info;
-  if (c->info && (uintptr_t)info != CACHE_ALLOW_MULTIPLE_WRITES) {
+  if (c->info && (uintptr_t)info != CACHE_ALLOW_MULTIPLE_WRITES && (uintptr_t)info != CACHE_PRETEND_TO_FAIL) {
     /*
        Update has the following code paths :
        a) Update alternate header only :

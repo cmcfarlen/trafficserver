@@ -130,6 +130,7 @@ struct HttpCacheKey {
 };
 
 #define CACHE_ALLOW_MULTIPLE_WRITES 1
+#define CACHE_PRETEND_TO_FAIL 2
 #define CACHE_EXPECTED_SIZE 32768
 
 /* uses of the CacheKey
