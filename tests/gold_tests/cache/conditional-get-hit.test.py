@@ -1,5 +1,5 @@
 '''
-Test conditional gets with body
+Test that conditional GETs with body don't interfere with subsequent request
 '''
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
@@ -23,21 +23,7 @@ Test conditional get with body drains the body from client"
 
 ts = Test.MakeATSProcess("ts-conditional-get-caching")
 ts.Disk.records_config.update({
-    'proxy.config.diags.debug.enabled': 1,
-    'proxy.config.diags.debug.tags': 'http|cache',
-    'proxy.config.http.insert_request_via_str': 1,
-    'proxy.config.http.insert_response_via_str': 3,
-
-
     'proxy.config.http.cache.max_stale_age': 6,
-    'proxy.config.cache.select_alternate': 1,
-    'proxy.config.cache.limits.http.max_alts': 4,
-
-    # Try with and without this
-    'proxy.config.http.negative_revalidating_enabled': 1,
-    'proxy.config.http.negative_caching_enabled': 1,
-    'proxy.config.http.negative_caching_lifetime': 30
-
 })
 tr = Test.AddTestRun("Verify conditional get with cache hit drain client body")
 replay_file = "replay/conditional-get-cache-hit.yaml"

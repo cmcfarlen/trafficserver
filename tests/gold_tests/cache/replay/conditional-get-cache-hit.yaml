@@ -14,12 +14,6 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
-#
-# Verify negative_revalidating disabled behavior. This replay file assumes:
-#   * ATS is configured with negative_revalidating disabled.
-#   * max_stale_age is set to 6 seconds.
-#
-
 meta:
   version: "1.0"
 
@@ -29,7 +23,6 @@ sessions:
   - client-request:
       method: "GET"
       version: "1.1"
-      scheme: "http"
       url: /path/request
       headers:
         fields:
@@ -42,9 +35,12 @@ sessions:
       reason: OK
       headers:
         fields:
-        - [ Content-Length, 16 ]
+        - [ Content-Length, 4 ]
         - [ Cache-Control, max-age=10 ]
         - [ ETag, "42" ]
+      content:
+        encoding: plain
+        data: "good"
 
 
     proxy-response:
@@ -54,7 +50,6 @@ sessions:
   - client-request:
       method: "GET"
       version: "1.1"
-      scheme: "http"
       url: /path/request
       headers:
         fields:
@@ -71,13 +66,17 @@ sessions:
       status: 500
       reason: ERR
 
+    # Since there is a cached ETag of 42, ATS should reply with a 304 as a proxy and
+    # the server should not get the request.
     proxy-response:
       status: 304
 
+
+    # Re-request the object and make sure the previous request's body does not
+    # confuse the parsing mechanism for this next request.
   - client-request:
       method: "GET"
       version: "1.1"
-      scheme: "http"
       url: /path/request
       headers:
         fields:
@@ -85,16 +84,16 @@ sessions:
           - [ Host, example.com ]
           - [ Accept, "*/*" ]
 
+    # ATS should reply with the cached resource as a proxy and the origin
+    # should not receive the request.
     server-response:
       status: 500
       reason: NOTUSED
-      headers:
-        fields:
-        - [ Content-Length, 5 ]
-        - [ Cache-Control, max-age=10 ]
-        - [ ETag, "43" ]
 
     proxy-response:
       status: 200
       reason: OK
+      content:
+        verify: {value: "good", as: equal}
+
 
