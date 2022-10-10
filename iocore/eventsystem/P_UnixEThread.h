@@ -78,6 +78,45 @@ EThread::schedule_in(Continuation *cont, ink_hrtime t, int callback_event, void 
   return schedule(e->init(cont, get_hrtime() + t, 0));
 }
 
+TS_INLINE int
+EThread::schedule_with_lock(Continuation *c, Ptr<ProxyMutex> &m, int callback_event, void *cookie)
+{
+  int rc   = EVENT_CONT;
+  Event *e = ::eventAllocator.alloc();
+
+#ifdef ENABLE_EVENT_TRACKER
+  e->set_location();
+#endif
+
+  e->callback_event = callback_event;
+  e->cookie         = cookie;
+  e->continuation   = c;
+  e->ethread        = this;
+
+  if (e->continuation->mutex) {
+    e->mutex = e->continuation->mutex;
+  } else {
+    e->mutex = e->continuation->mutex = e->ethread->mutex;
+  }
+  ink_assert(e->mutex.get());
+
+  // If the lock can be acquired, then just dispatch the event inline.
+  bool locked = Mutex_lock_or_enqueue(
+#ifdef DEBUG
+    MakeSourceLocation(), nullptr,
+#endif
+    m, e);
+  if (locked) {
+    // if the lock was acquired, we can just run the continuation
+    e->holds_lock = 1;
+    process_event(e, CONTINUATION_EVENT_NONE);
+    Mutex_unlock(m.get(), this);
+  } else {
+    // we are queued for this mutex
+  }
+  return rc;
+}
+
 TS_INLINE Event *
 EThread::schedule_every(Continuation *cont, ink_hrtime t, int callback_event, void *cookie)
 {

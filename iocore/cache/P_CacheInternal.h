@@ -320,6 +320,7 @@ struct CacheVC : public CacheVConnection {
   int dead(int event, Event *e);
 
   int handleReadDone(int event, Event *e);
+  int handleReadDoneLocked(int event, AsyncLockController *e);
   int handleRead(int event, Event *e);
   int do_read_call(CacheKey *akey);
   int handleWrite(int event, Event *e);
@@ -330,11 +331,14 @@ struct CacheVC : public CacheVConnection {
   int do_sync(uint32_t target_write_serial);
 
   int openReadClose(int event, Event *e);
+  int openReadCloseLocked(int event, Event *e);
   int openReadReadDone(int event, Event *e);
+  int openReadReadDoneLocked(int event, AsyncLockController *c);
   int openReadMain(int event, Event *e);
   int openReadStartEarliest(int event, Event *e);
   int openReadVecWrite(int event, Event *e);
   int openReadStartHead(int event, Event *e);
+  int openReadStartHeadLocked(int event, AsyncLockController *e);
   int openReadFromWriter(int event, Event *e);
   int openReadFromWriterMain(int event, Event *e);
   int openReadFromWriterFailure(int event, Event *);
@@ -358,6 +362,7 @@ struct CacheVC : public CacheVConnection {
   int updateVecWrite(int event, Event *e);
 
   int removeEvent(int event, Event *e);
+  int removeEventLocked(int event, Event *e);
 
   int linkWrite(int event, Event *e);
   int derefRead(int event, Event *e);

@@ -72,6 +72,7 @@ libinkevent_a_SOURCES = \
 
 check_PROGRAMS = test_IOBuffer \
 	test_EventSystem \
+	test_AsyncMutex \
 	test_MIOBufferWriter \
 	benchmark_ProxyAllocator
 
@@ -105,6 +106,11 @@ test_EventSystem_SOURCES = unit_tests/test_EventSystem.cc
 test_EventSystem_CPPFLAGS = $(test_CPP_FLAGS)
 test_EventSystem_LDFLAGS = $(test_LD_FLAGS)
 test_EventSystem_LDADD = $(test_LD_ADD)
+
+test_AsyncMutex_SOURCES = unit_tests/test_AsyncMutex.cc
+test_AsyncMutex_CPPFLAGS = $(test_CPP_FLAGS)
+test_AsyncMutex_LDFLAGS = $(test_LD_FLAGS)
+test_AsyncMutex_LDADD = $(test_LD_ADD)
 
 test_IOBuffer_SOURCES = unit_tests/test_IOBuffer.cc
 test_IOBuffer_CPPFLAGS = $(test_CPP_FLAGS)

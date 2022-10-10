@@ -172,6 +172,15 @@ public:
   Event *schedule_in(Continuation *c, ink_hrtime atimeout_in, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
 
   /**
+   * Schedule a continuation to be called with the given ProxyMutex lock can be acquired.
+   *
+   * @param c Continuation to be called back when the lock is acquired
+   * @param m The ProxyMutex to lock before calling the Continuation
+   * @return a return code that is either EVENT_CONT if the event will be run later or the event handler return code
+   */
+  int schedule_with_lock(Continuation *c, Ptr<ProxyMutex> &m, int callback_event = EVENT_INTERVAL, void *cookie = nullptr);
+
+  /**
     Schedules the continuation on this EThread to receive an event
     periodically.
 

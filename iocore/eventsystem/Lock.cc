@@ -29,6 +29,7 @@
 
 **************************************************************************/
 #include "P_EventSystem.h"
+#include "I_Event.h"
 #include "tscore/Diags.h"
 
 ClassAllocator<ProxyMutex> mutexAllocator("mutexAllocator");
@@ -57,6 +58,115 @@ lock_taken(const SourceLocation &srcloc, const char *handler)
   if (is_diags_on("locks")) {
     char buf[128];
     fprintf(stderr, "WARNING: lock %s taken too many times for %s\n", srcloc.str(buf, sizeof(buf)), handler ? handler : "UNKNOWN");
+  }
+}
+
+Event *&
+EventLink::next_link(Event *e)
+{
+  return Event::Link_link::next_link(e);
+}
+
+Event *&
+EventLink::prev_link(Event *e)
+{
+  return Event::Link_link::prev_link(e);
+}
+
+const Event *
+EventLink::next_link(const Event *e)
+{
+  return Event::Link_link::next_link(e);
+}
+
+const Event *
+EventLink::prev_link(const Event *e)
+{
+  return Event::Link_link::prev_link(e);
+}
+
+AsyncLockController::AsyncLockController(
+#ifdef DEBUG
+  const SourceLocation &location, const char *ahandler,
+#endif
+  Event *e, Ptr<ProxyMutex> &m)
+  :
+#ifdef DEBUG
+    location(location),
+    ahandler(ahandler),
+#endif
+    e(e),
+    m(m),
+    cookie(e->cookie),
+    released(false)
+{
+}
+AsyncLockController::~AsyncLockController()
+{
+  if (!released) {
+    release_and_schedule_waiting();
+  }
+}
+
+void
+AsyncLockController::release_and_schedule_waiting()
+{
+  if (!released) {
+    // Mutex_unlock will schedule a waiting event
+    Mutex_unlock(m, this_ethread());
+    released = true;
+  }
+}
+
+static ClassAllocator<AsyncLockController> asyncLockControllerAllocator("AsyncLockController");
+
+void
+free_async_controller(AsyncLockController *c)
+{
+  asyncLockControllerAllocator.free(c);
+}
+
+bool
+Mutex_lock_or_enqueue(
+#ifdef DEBUG
+  const SourceLocation &location, const char *ahandler,
+#endif
+  Ptr<ProxyMutex> &m, Event *e)
+{
+  ink_mutex_acquire(&m->q_mutex);
+  auto *controller = asyncLockControllerAllocator.alloc(
+#ifdef DEBUG
+    location, ahandler,
+#endif
+    e, m);
+  e->cookie      = static_cast<void *>(controller);
+  bool is_locked = Mutex_trylock(location, ahandler, m, e->ethread);
+  if (!is_locked) {
+    std::printf("%p: lock_or_enqueue thread=%p holding=%p (%p) enqueueing intra-thread event\n", m.get(), this_ethread(),
+                m.get()->thread_holding, e);
+    m->queue.push(e);
+  }
+  ink_mutex_release(&m->q_mutex);
+  return is_locked;
+}
+
+void
+Mutex_adopt_lock_for_event(ProxyMutex *m, EThread *t, Event *e)
+{
+  // The cookie pointer in e is a AsyncLockController instance, so we need to replace the cookie pointer with the one
+  // stored in the controller
+  // maybe need to transfer the lock to another thread
+  if (e->ethread != this_ethread()) {
+    std::printf("%p: adopt_lock_for_event thread=%p target thread=%p (%p) adopting lock and scheduling\n", m, this_ethread(),
+                e->ethread, e);
+    m->thread_holding = nullptr;
+    // set this flag so the schedule knows to handle the async controller
+    e->holds_lock = true;
+    ink_mutex_release(&m->the_mutex);
+    e->ethread->schedule(e);
+  } else {
+    std::printf("%p: adopt_lock_for_event thread=%p (%p) dispatching next event\n", m, this_ethread(), e);
+    t->process_event(e, CONTINUATION_EVENT_NONE); // use a "lock available" calling code?
   }
 }
 

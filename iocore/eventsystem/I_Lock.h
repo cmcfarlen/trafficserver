@@ -123,7 +123,17 @@
 /////////////////////////////////////
 
 class EThread;
+class Event;
 typedef EThread *EThreadPtr;
+
+class EventLink
+{
+public:
+  static Event *&next_link(Event *);
+  static Event *&prev_link(Event *);
+  static const Event *next_link(const Event *);
+  static const Event *prev_link(const Event *);
+};
 
 #if DEBUG
 extern void lock_waiting(const SourceLocation &, const char *handler);
@@ -180,6 +190,9 @@ public:
   EThreadPtr thread_holding;
 
   int nthread_holding;
+
+  ink_mutex q_mutex; // this mutex is for the DLL
+  DLL<Event, EventLink> queue;
 
 #ifdef DEBUG
   ink_hrtime hold_time;
@@ -245,6 +258,7 @@ public:
   init(const char *name = "UnnamedMutex")
   {
     ink_mutex_init(&the_mutex);
+    ink_mutex_init(&q_mutex);
   }
 };
 
@@ -355,6 +369,8 @@ Mutex_lock(
     m.get(), t);
 }
 
+void Mutex_adopt_lock_for_event(ProxyMutex *m, EThread *t, Event *e);
+
 inline void
 Mutex_unlock(ProxyMutex *m, EThread *t)
 {
@@ -373,8 +389,19 @@ Mutex_unlock(ProxyMutex *m, EThread *t)
       m->handler = nullptr;
 #endif // DEBUG
       ink_assert(m->thread_holding);
-      m->thread_holding = nullptr;
-      ink_mutex_release(&m->the_mutex);
+
+      ink_mutex_acquire(&m->q_mutex);
+      // check for a waiting event and schedule
+      Event *e = m->queue.pop();
+      ink_mutex_release(&m->q_mutex);
+
+      // if there is an event, run or schedule it
+      if (e) {
+        Mutex_adopt_lock_for_event(m, t, e);
+      } else {
+        m->thread_holding = nullptr;
+        ink_mutex_release(&m->the_mutex);
+      }
     }
   }
 }
@@ -384,6 +411,71 @@ Mutex_unlock(Ptr<ProxyMutex> &m, EThread *t)
 {
   Mutex_unlock(m.get(), t);
 }
+
+class AsyncLockController
+{
+public:
+  AsyncLockController(
+#ifdef DEBUG
+    const SourceLocation &location, const char *ahandler,
+#endif
+    Event *e, Ptr<ProxyMutex> &m);
+  ~AsyncLockController();
+
+  Event *
+  get_event() const
+  {
+    return e;
+  }
+  Ptr<ProxyMutex> &
+  get_mutex()
+  {
+    return m;
+  }
+  void *
+  get_cookie() const
+  {
+    return cookie;
+  }
+  bool
+  is_released() const
+  {
+    return released;
+  }
+
+  // This can be used to release a lock early
+  void release_and_schedule_waiting();
+
+  auto
+  release_and_schedule_after_scope()
+  {
+    struct ScopedUnlocker {
+      ~ScopedUnlocker() { p->release_and_schedule_waiting(); }
+      AsyncLockController *p;
+    };
+    return ScopedUnlocker{this};
+  }
+
+#ifdef DEBUG
+  const SourceLocation &location;
+  const char *ahandler;
+#endif
+  Event *e;
+  Ptr<ProxyMutex> m;
+
+  // when waiting in the DLL for a mutex, the Event cookie pointer is this instance, so
+  // this cookie pointer holds the original cookie of the event
+  void *cookie;
+  bool released;
+};
+
+void free_async_controller(AsyncLockController *);
+
+bool Mutex_lock_or_enqueue(
+#ifdef DEBUG
+  const SourceLocation &location, const char *ahandler,
+#endif
+  Ptr<ProxyMutex> &m, Event *e);
 
 class WeakMutexLock
 {

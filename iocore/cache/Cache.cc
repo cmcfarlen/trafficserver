@@ -2168,6 +2168,114 @@ unmarshal_helper(Doc *doc, Ptr<IOBufferData> &buf, int &okay)
   }
 }
 
+int
+CacheVC::handleReadDoneLocked(int event, AsyncLockController *e)
+{
+  Doc *doc = nullptr;
+  if ((!dir_valid(vol, &dir)) || (!io.ok())) {
+    if (!io.ok()) {
+      Debug("cache_disk_error", "Read error on disk %s\n \
+	    read range : [%" PRIu64 " - %" PRIu64 " bytes]  [%" PRIu64 " - %" PRIu64 " blocks] \n",
+            vol->hash_text.get(), (uint64_t)io.aiocb.aio_offset, (uint64_t)io.aiocb.aio_offset + io.aiocb.aio_nbytes,
+            (uint64_t)io.aiocb.aio_offset / 512, (uint64_t)(io.aiocb.aio_offset + io.aiocb.aio_nbytes) / 512);
+    }
+    goto Ldone;
+  }
+
+  doc = reinterpret_cast<Doc *>(buf->data());
+  ink_assert(vol->mutex->nthread_holding < 1000);
+  ink_assert(doc->magic == DOC_MAGIC);
+
+  if (ts::VersionNumber(doc->v_major, doc->v_minor) > CACHE_DB_VERSION) {
+    // future version, count as corrupted
+    doc->magic = DOC_CORRUPT;
+    Debug("cache_bc", "Object is future version %d:%d - disk %s - doc id = %" PRIx64 ":%" PRIx64 "", doc->v_major, doc->v_minor,
+          vol->hash_text.get(), read_key->slice64(0), read_key->slice64(1));
+    goto Ldone;
+  }
+
+#ifdef VERIFY_JTEST_DATA
+  char xx[500];
+  if (read_key && *read_key == doc->key && request.valid() && !dir_head(&dir) && !vio.ndone) {
+    int ib = 0, xd = 0;
+    request.url_get()->print(xx, 500, &ib, &xd);
+    char *x = xx;
+    for (int q = 0; q < 3; q++)
+      x = strchr(x + 1, '/');
+    ink_assert(!memcmp(doc->data(), x, ib - (x - xx)));
+  }
+#endif
+
+  if (is_debug_tag_set("cache_read")) {
+    char xt[CRYPTO_HEX_SIZE];
+    Debug("cache_read", "Read complete on fragment %s. Length: data payload=%d this fragment=%d total doc=%" PRId64 " prefix=%d",
+          doc->key.toHexStr(xt), doc->data_len(), doc->len, doc->total_len, doc->prefix_len());
+  }
+
+  // put into ram cache?
+  if (io.ok() && ((doc->first_key == *read_key) || (doc->key == *read_key) || STORE_COLLISION) && doc->magic == DOC_MAGIC) {
+    int okay = 1;
+    if (!f.doc_from_ram_cache) {
+      f.not_from_ram_cache = 1;
+    }
+    if (cache_config_enable_checksum && doc->checksum != DOC_NO_CHECKSUM) {
+      // verify that the checksum matches
+      uint32_t checksum = 0;
+      for (char *b = doc->hdr(); b < reinterpret_cast<char *>(doc) + doc->len; b++) {
+        checksum += *b;
+      }
+      ink_assert(checksum == doc->checksum);
+      if (checksum != doc->checksum) {
+        Note("cache: checksum error for [%" PRIu64 " %" PRIu64 "] len %d, hlen %d, disk %s, offset %" PRIu64 " size %zu",
+             doc->first_key.b[0], doc->first_key.b[1], doc->len, doc->hlen, vol->path, (uint64_t)io.aiocb.aio_offset,
+             (size_t)io.aiocb.aio_nbytes);
+        doc->magic = DOC_CORRUPT;
+        okay       = 0;
+      }
+    }
+    (void)e; // Avoid compiler warnings
+    bool http_copy_hdr = false;
+    http_copy_hdr = cache_config_ram_cache_compress && !f.doc_from_ram_cache && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen;
+    // If http doc we need to unmarshal the headers before putting in the ram cache
+    // unless it could be compressed
+    if (!http_copy_hdr && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay) {
+      unmarshal_helper(doc, buf, okay);
+    }
+    // Put the request in the ram cache only if its a open_read or lookup
+    if (vio.op == VIO::READ && okay) {
+      bool cutoff_check;
+      // cutoff_check :
+      // doc_len == 0 for the first fragment (it is set from the vector)
+      //                The decision on the first fragment is based on
+      //                doc->total_len
+      // After that, the decision is based of doc_len (doc_len != 0)
+      // (cache_config_ram_cache_cutoff == 0) : no cutoffs
+      cutoff_check = ((!doc_len && static_cast<int64_t>(doc->total_len) < cache_config_ram_cache_cutoff) ||
+                      (doc_len && static_cast<int64_t>(doc_len) < cache_config_ram_cache_cutoff) || !cache_config_ram_cache_cutoff);
+      if (cutoff_check && !f.doc_from_ram_cache) {
+        uint64_t o = dir_offset(&dir);
+        vol->ram_cache->put(read_key, buf.get(), doc->len, http_copy_hdr, o);
+      }
+      if (!doc_len) {
+        // keep a pointer to it. In case the state machine decides to
+        // update this document, we don't have to read it back in memory
+        // again
+        vol->first_fragment_key    = *read_key;
+        vol->first_fragment_offset = dir_offset(&dir);
+        vol->first_fragment_data   = buf;
+      }
+    } // end VIO::READ check
+    // If it could be compressed, unmarshal after
+    if (http_copy_hdr && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay) {
+      unmarshal_helper(doc, buf, okay);
+    }
+  } // end io.ok() check
+Ldone:
+  e->release_and_schedule_waiting();
+  POP_HANDLER;
+  return handleEvent(AIO_EVENT_DONE, nullptr);
+}
+
 // [amc] I think this is where all disk reads from cache funnel through here.
 int
 CacheVC::handleReadDone(int event, Event *e)
@@ -2175,121 +2283,15 @@ CacheVC::handleReadDone(int event, Event *e)
   cancel_trigger();
   ink_assert(this_ethread() == mutex->thread_holding);
 
-  Doc *doc = nullptr;
   if (event == AIO_EVENT_DONE) {
     set_io_not_in_progress();
   } else if (is_io_in_progress()) {
     return EVENT_CONT;
   }
-  {
-    MUTEX_TRY_LOCK(lock, vol->mutex, mutex->thread_holding);
-    if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
-    }
-    if ((!dir_valid(vol, &dir)) || (!io.ok())) {
-      if (!io.ok()) {
-        Debug("cache_disk_error", "Read error on disk %s\n \
-	    read range : [%" PRIu64 " - %" PRIu64 " bytes]  [%" PRIu64 " - %" PRIu64 " blocks] \n",
-              vol->hash_text.get(), (uint64_t)io.aiocb.aio_offset, (uint64_t)io.aiocb.aio_offset + io.aiocb.aio_nbytes,
-              (uint64_t)io.aiocb.aio_offset / 512, (uint64_t)(io.aiocb.aio_offset + io.aiocb.aio_nbytes) / 512);
-      }
-      goto Ldone;
-    }
 
-    doc = reinterpret_cast<Doc *>(buf->data());
-    ink_assert(vol->mutex->nthread_holding < 1000);
-    ink_assert(doc->magic == DOC_MAGIC);
-
-    if (ts::VersionNumber(doc->v_major, doc->v_minor) > CACHE_DB_VERSION) {
-      // future version, count as corrupted
-      doc->magic = DOC_CORRUPT;
-      Debug("cache_bc", "Object is future version %d:%d - disk %s - doc id = %" PRIx64 ":%" PRIx64 "", doc->v_major, doc->v_minor,
-            vol->hash_text.get(), read_key->slice64(0), read_key->slice64(1));
-      goto Ldone;
-    }
-
-#ifdef VERIFY_JTEST_DATA
-    char xx[500];
-    if (read_key && *read_key == doc->key && request.valid() && !dir_head(&dir) && !vio.ndone) {
-      int ib = 0, xd = 0;
-      request.url_get()->print(xx, 500, &ib, &xd);
-      char *x = xx;
-      for (int q = 0; q < 3; q++)
-        x = strchr(x + 1, '/');
-      ink_assert(!memcmp(doc->data(), x, ib - (x - xx)));
-    }
-#endif
-
-    if (is_debug_tag_set("cache_read")) {
-      char xt[CRYPTO_HEX_SIZE];
-      Debug("cache_read", "Read complete on fragment %s. Length: data payload=%d this fragment=%d total doc=%" PRId64 " prefix=%d",
-            doc->key.toHexStr(xt), doc->data_len(), doc->len, doc->total_len, doc->prefix_len());
-    }
-
-    // put into ram cache?
-    if (io.ok() && ((doc->first_key == *read_key) || (doc->key == *read_key) || STORE_COLLISION) && doc->magic == DOC_MAGIC) {
-      int okay = 1;
-      if (!f.doc_from_ram_cache) {
-        f.not_from_ram_cache = 1;
-      }
-      if (cache_config_enable_checksum && doc->checksum != DOC_NO_CHECKSUM) {
-        // verify that the checksum matches
-        uint32_t checksum = 0;
-        for (char *b = doc->hdr(); b < reinterpret_cast<char *>(doc) + doc->len; b++) {
-          checksum += *b;
-        }
-        ink_assert(checksum == doc->checksum);
-        if (checksum != doc->checksum) {
-          Note("cache: checksum error for [%" PRIu64 " %" PRIu64 "] len %d, hlen %d, disk %s, offset %" PRIu64 " size %zu",
-               doc->first_key.b[0], doc->first_key.b[1], doc->len, doc->hlen, vol->path, (uint64_t)io.aiocb.aio_offset,
-               (size_t)io.aiocb.aio_nbytes);
-          doc->magic = DOC_CORRUPT;
-          okay       = 0;
-        }
-      }
-      (void)e; // Avoid compiler warnings
-      bool http_copy_hdr = false;
-      http_copy_hdr =
-        cache_config_ram_cache_compress && !f.doc_from_ram_cache && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen;
-      // If http doc we need to unmarshal the headers before putting in the ram cache
-      // unless it could be compressed
-      if (!http_copy_hdr && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay) {
-        unmarshal_helper(doc, buf, okay);
-      }
-      // Put the request in the ram cache only if its a open_read or lookup
-      if (vio.op == VIO::READ && okay) {
-        bool cutoff_check;
-        // cutoff_check :
-        // doc_len == 0 for the first fragment (it is set from the vector)
-        //                The decision on the first fragment is based on
-        //                doc->total_len
-        // After that, the decision is based of doc_len (doc_len != 0)
-        // (cache_config_ram_cache_cutoff == 0) : no cutoffs
-        cutoff_check =
-          ((!doc_len && static_cast<int64_t>(doc->total_len) < cache_config_ram_cache_cutoff) ||
-           (doc_len && static_cast<int64_t>(doc_len) < cache_config_ram_cache_cutoff) || !cache_config_ram_cache_cutoff);
-        if (cutoff_check && !f.doc_from_ram_cache) {
-          uint64_t o = dir_offset(&dir);
-          vol->ram_cache->put(read_key, buf.get(), doc->len, http_copy_hdr, o);
-        }
-        if (!doc_len) {
-          // keep a pointer to it. In case the state machine decides to
-          // update this document, we don't have to read it back in memory
-          // again
-          vol->first_fragment_key    = *read_key;
-          vol->first_fragment_offset = dir_offset(&dir);
-          vol->first_fragment_data   = buf;
-        }
-      } // end VIO::READ check
-      // If it could be compressed, unmarshal after
-      if (http_copy_hdr && doc->doc_type == CACHE_FRAG_TYPE_HTTP && doc->hlen && okay) {
-        unmarshal_helper(doc, buf, okay);
-      }
-    } // end io.ok() check
-  }
-Ldone:
-  POP_HANDLER;
-  return handleEvent(AIO_EVENT_DONE, nullptr);
+  // after the read is done (AIO_EVENT_DONE), finish the read with vol locked
+  SET_HANDLER(&CacheVC::handleReadDoneLocked);
+  return this_ethread()->schedule_with_lock(this, vol->mutex);
 }
 
 int
@@ -2385,77 +2387,69 @@ Cache::lookup(Continuation *cont, const CacheKey *key, CacheFragType type, const
 }
 
 int
-CacheVC::removeEvent(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
+CacheVC::removeEventLocked(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
 {
-  cancel_trigger();
-  set_io_not_in_progress();
-  {
-    MUTEX_TRY_LOCK(lock, vol->mutex, mutex->thread_holding);
-    if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
-    }
-    if (_action.cancelled) {
-      if (od) {
-        vol->close_write(this);
-        od = nullptr;
-      }
-      goto Lfree;
-    }
-    if (!f.remove_aborted_writers) {
-      if (vol->open_write(this, true, 1)) {
-        // writer  exists
-        od = vol->open_read(&key);
-        ink_release_assert(od);
-        od->dont_update_directory = true;
-        od                        = nullptr;
-      } else {
-        od->dont_update_directory = true;
-      }
-      f.remove_aborted_writers = 1;
-    }
-  Lread:
-    SET_HANDLER(&CacheVC::removeEvent);
-    if (!buf) {
-      goto Lcollision;
-    }
-    if (!dir_valid(vol, &dir)) {
-      last_collision = nullptr;
-      goto Lcollision;
-    }
-    // check read completed correct FIXME: remove bad vols
-    if (static_cast<size_t>(io.aio_result) != io.aiocb.aio_nbytes) {
-      goto Ldone;
-    }
-    {
-      // verify that this is our document
-      Doc *doc = reinterpret_cast<Doc *>(buf->data());
-      /* should be first_key not key..right?? */
-      if (doc->first_key == key) {
-        ink_assert(doc->magic == DOC_MAGIC);
-        if (dir_delete(&key, vol, &dir) > 0) {
-          if (od) {
-            vol->close_write(this);
-          }
-          od = nullptr;
-          goto Lremoved;
-        }
-        goto Ldone;
-      }
-    }
-  Lcollision:
-    // check for collision
-    if (dir_probe(&key, vol, &dir, &last_collision) > 0) {
-      int ret = do_read_call(&key);
-      if (ret == EVENT_RETURN) {
-        goto Lread;
-      }
-      return ret;
-    }
-  Ldone:
-    CACHE_INCREMENT_DYN_STAT(cache_remove_failure_stat);
+  if (_action.cancelled) {
     if (od) {
       vol->close_write(this);
+      od = nullptr;
     }
+    goto Lfree;
+  }
+  if (!f.remove_aborted_writers) {
+    if (vol->open_write(this, true, 1)) {
+      // writer  exists
+      od = vol->open_read(&key);
+      ink_release_assert(od);
+      od->dont_update_directory = true;
+      od                        = nullptr;
+    } else {
+      od->dont_update_directory = true;
+    }
+    f.remove_aborted_writers = 1;
+  }
+Lread:
+  SET_HANDLER(&CacheVC::removeEvent);
+  if (!buf) {
+    goto Lcollision;
+  }
+  if (!dir_valid(vol, &dir)) {
+    last_collision = nullptr;
+    goto Lcollision;
+  }
+  // check read completed correct FIXME: remove bad vols
+  if (static_cast<size_t>(io.aio_result) != io.aiocb.aio_nbytes) {
+    goto Ldone;
+  }
+  {
+    // verify that this is our document
+    Doc *doc = reinterpret_cast<Doc *>(buf->data());
+    /* should be first_key not key..right?? */
+    if (doc->first_key == key) {
+      ink_assert(doc->magic == DOC_MAGIC);
+      if (dir_delete(&key, vol, &dir) > 0) {
+        if (od) {
+          vol->close_write(this);
+        }
+        od = nullptr;
+        goto Lremoved;
+      }
+      goto Ldone;
+    }
+  }
+Lcollision:
+  // check for collision
+  if (dir_probe(&key, vol, &dir, &last_collision) > 0) {
+    int ret = do_read_call(&key);
+    if (ret == EVENT_RETURN) {
+      goto Lread;
+    }
+    return ret;
+  }
+Ldone:
+  CACHE_INCREMENT_DYN_STAT(cache_remove_failure_stat);
+  if (od) {
+    vol->close_write(this);
   }
   ink_assert(!vol || this_ethread() != vol->mutex->thread_holding);
   _action.continuation->handleEvent(CACHE_EVENT_REMOVE_FAILED, (void *)-ECACHE_NO_DOC);
@@ -2464,6 +2458,16 @@ Lremoved:
   _action.continuation->handleEvent(CACHE_EVENT_REMOVE, nullptr);
 Lfree:
   return free_CacheVC(this);
+}
+
+int
+CacheVC::removeEvent(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
+{
+  cancel_trigger();
+  set_io_not_in_progress();
+
+  SET_HANDLER(&CacheVC::removeEventLocked);
+  return this_ethread()->schedule_with_lock(this, vol->mutex);
 }
 
 Action *

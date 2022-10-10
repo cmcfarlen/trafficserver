@@ -42,6 +42,12 @@ Event::free()
 }
 
 TS_INLINE
-Event::Event() : in_the_prot_queue(false), in_the_priority_queue(false), immediate(false), globally_allocated(true), in_heap(false)
+Event::Event()
+  : in_the_prot_queue(false),
+    in_the_priority_queue(false),
+    immediate(false),
+    globally_allocated(true),
+    holds_lock(false),
+    in_heap(false)
 {
 }

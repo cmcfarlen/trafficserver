@@ -522,19 +522,8 @@ CacheVC::openReadFromWriterMain(int /* event ATS_UNUSED */, Event * /* e ATS_UNU
 }
 
 int
-CacheVC::openReadClose(int event, Event * /* e ATS_UNUSED */)
+CacheVC::openReadCloseLocked(int event, Event * /* e ATS_UNUSED */)
 {
-  cancel_trigger();
-  if (is_io_in_progress()) {
-    if (event != AIO_EVENT_DONE) {
-      return EVENT_CONT;
-    }
-    set_io_not_in_progress();
-  }
-  CACHE_TRY_LOCK(lock, vol->mutex, mutex->thread_holding);
-  if (!lock.is_locked()) {
-    VC_SCHED_LOCK_RETRY();
-  }
   if (f.hit_evacuate && dir_valid(vol, &first_dir) && closed > 0) {
     if (f.single_fragment) {
       vol->force_evacuate_head(&first_dir, dir_pinned(&first_dir));
@@ -548,23 +537,28 @@ CacheVC::openReadClose(int event, Event * /* e ATS_UNUSED */)
 }
 
 int
-CacheVC::openReadReadDone(int event, Event *e)
+CacheVC::openReadClose(int event, Event * /* e ATS_UNUSED */)
+{
+  cancel_trigger();
+  if (is_io_in_progress()) {
+    if (event != AIO_EVENT_DONE) {
+      return EVENT_CONT;
+    }
+    set_io_not_in_progress();
+  }
+
+  SET_HANDLER(&CacheVC::openReadCloseLocked);
+  return this_ethread()->schedule_with_lock(this, vol->mutex);
+}
+
+int
+CacheVC::openReadReadDoneLocked(int event, AsyncLockController *c)
 {
   Doc *doc = nullptr;
 
-  cancel_trigger();
-  if (event == EVENT_IMMEDIATE) {
-    return EVENT_CONT;
-  }
-  set_io_not_in_progress();
   {
-    CACHE_TRY_LOCK(lock, vol->mutex, mutex->thread_holding);
-    if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
-    }
-    if (event == AIO_EVENT_DONE && !io.ok()) {
-      goto Lerror;
-    }
+    auto unlocker = c->release_and_schedule_after_scope();
+
     if (last_collision &&     // no missed lock
         dir_valid(vol, &dir)) // object still valid
     {
@@ -613,8 +607,9 @@ CacheVC::openReadReadDone(int event, Event *e)
         goto Ldone;
       }
     }
-    // fall through for truncated documents
   }
+
+  // fall through for truncated documents
 Lerror : {
   char tmpstring[CRYPTO_HEX_SIZE];
   if (request.valid()) {
@@ -636,7 +631,33 @@ LreadMain:
   doc_pos = doc->prefix_len();
   next_CacheKey(&key, &key);
   SET_HANDLER(&CacheVC::openReadMain);
-  return openReadMain(event, e);
+  return openReadMain(event, c->get_event());
+}
+
+int
+CacheVC::openReadReadDone(int event, Event *e)
+{
+  cancel_trigger();
+  if (event == EVENT_IMMEDIATE) {
+    return EVENT_CONT;
+  }
+  set_io_not_in_progress();
+
+  if (event == AIO_EVENT_DONE && !io.ok()) {
+    char tmpstring[CRYPTO_HEX_SIZE];
+    if (request.valid()) {
+      int url_length;
+      const char *url_text = request.url_get()->string_get_ref(&url_length);
+      Warning("Document %s truncated, url[%.*s] .. clearing", earliest_key.toHexStr(tmpstring), url_length, url_text);
+    } else {
+      Warning("Document %s truncated .. clearing", earliest_key.toHexStr(tmpstring));
+    }
+    dir_delete(&earliest_key, vol, &earliest_dir);
+    return calluser(VC_EVENT_ERROR);
+  }
+
+  SET_HANDLER(&CacheVC::openReadReadDoneLocked);
+  return this_ethread()->schedule_with_lock(this, vol->mutex);
 }
 
 int
@@ -1050,26 +1071,15 @@ Lrestart:
   SET_HANDLER(&CacheVC::openReadStartHead);
   return openReadStartHead(EVENT_IMMEDIATE, nullptr);
 }
-
-/*
-  This code follows CacheVC::openReadStartEarliest closely,
-  if you change this you might have to change that.
-*/
 int
-CacheVC::openReadStartHead(int event, Event *e)
+CacheVC::openReadStartHeadLocked(int event, AsyncLockController *c)
 {
   intptr_t err = ECACHE_NO_DOC;
   Doc *doc     = nullptr;
-  cancel_trigger();
-  set_io_not_in_progress();
-  if (_action.cancelled) {
-    return free_CacheVC(this);
-  }
+  Event *e     = c->get_event();
   {
-    CACHE_TRY_LOCK(lock, vol->mutex, mutex->thread_holding);
-    if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
-    }
+    auto unlocker = c->release_and_schedule_after_scope();
+
     if (!buf) {
       goto Lread;
     }
@@ -1233,9 +1243,7 @@ CacheVC::openReadStartHead(int event, Event *e)
         goto Ldone;
       }
       od = cod;
-      MUTEX_RELEASE(lock);
-      SET_HANDLER(&CacheVC::openReadFromWriter);
-      return handleEvent(EVENT_IMMEDIATE, nullptr);
+      goto Lreadfromwrite;
     }
     if (dir_probe(&key, vol, &dir, &last_collision)) {
       first_dir = dir;
@@ -1246,6 +1254,9 @@ CacheVC::openReadStartHead(int event, Event *e)
       return ret;
     }
   }
+Lreadfromwrite:
+  SET_HANDLER(&CacheVC::openReadFromWriter);
+  return handleEvent(EVENT_IMMEDIATE, nullptr);
 Ldone:
   if (!f.lookup) {
     CACHE_INCREMENT_DYN_STAT(cache_read_failure_stat);
@@ -1271,6 +1282,22 @@ Learliest:
   last_collision = nullptr;
   SET_HANDLER(&CacheVC::openReadStartEarliest);
   return openReadStartEarliest(event, e);
+}
+
+/*
+  This code follows CacheVC::openReadStartEarliest closely,
+  if you change this you might have to change that.
+*/
+int
+CacheVC::openReadStartHead(int event, Event *e)
+{
+  cancel_trigger();
+  set_io_not_in_progress();
+  if (_action.cancelled) {
+    return free_CacheVC(this);
+  }
+  SET_HANDLER(&CacheVC::openReadStartHeadLocked);
+  return this_ethread()->schedule_with_lock(this, vol->mutex);
 }
 
 /*

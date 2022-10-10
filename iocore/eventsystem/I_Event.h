@@ -213,6 +213,7 @@ public:
   unsigned int in_the_priority_queue : 1;
   unsigned int immediate : 1;
   unsigned int globally_allocated : 1;
+  unsigned int holds_lock : 1; // This event holds a lock adopted from another thread
   unsigned int in_heap : 4;
   int callback_event = 0;
 

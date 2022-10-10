@@ -150,7 +150,22 @@ EThread::process_event(Event *e, int calling_code)
     // Restore the client IP debugging flags
     set_cont_flags(e->continuation->control_flags);
 
-    e->continuation->handleEvent(calling_code, e);
+    if (e->holds_lock) {
+      AsyncLockController *c = static_cast<AsyncLockController *>(e->cookie);
+      std::printf("%p: process-event thread=%p (%p) processing adopted event\n", c->m.get(), this, e);
+      Mutex_lock(
+#ifdef DEBUG
+        c->location, c->ahandler,
+#endif
+        c->m.get(), this);
+      e->cookie = c->get_cookie();
+      e->continuation->handleEvent(calling_code, c);
+      c->release_and_schedule_waiting();
+      free_async_controller(c);
+    } else {
+      e->continuation->handleEvent(calling_code, e);
+    }
+
     ink_assert(!e->in_the_priority_queue);
     ink_assert(c_temp == e->continuation);
     MUTEX_RELEASE(lock);
