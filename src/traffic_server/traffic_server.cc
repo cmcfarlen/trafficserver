@@ -32,6 +32,7 @@
 
 #include "swoc/swoc_file.h"
 
+#include "P_IOUringNetProcessor.h"
 #include "tscore/ink_platform.h"
 #include "tscore/ink_sys_control.h"
 #include "tscore/ink_args.h"
@@ -2045,6 +2046,8 @@ main(int /* argc ATS_UNUSED */, const char **argv)
   IOUringContext::set_main_queue(ur);
   auto [bounded, unbounded] = ur->get_wq_max_workers();
   Note("io_uring: WQ workers - bounded = %d, unbounded = %d", bounded, unbounded);
+
+  ioUringNetProcessor.init();
 #endif
 
   // !! ET_NET threads start here !!
@@ -2154,6 +2157,11 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     if (num_of_udp_threads) {
       udpNet.start(num_of_udp_threads, stacksize);
       eventProcessor.thread_group[ET_UDP]._afterStartCallback = init_HttpProxyServer;
+    }
+
+    constexpr int num_of_iouring_threads = 4;
+    if (num_of_iouring_threads) {
+      ioUringNetProcessor.start(num_of_iouring_threads, stacksize);
     }
 
     // Initialize Response Body Factory
