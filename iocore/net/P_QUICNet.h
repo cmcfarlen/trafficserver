@@ -33,7 +33,7 @@
 #include "P_QUICNetVConnection.h"
 
 class NetHandler;
-typedef int (NetHandler::*NetContHandler)(int, void *);
+using NetContHandler = int (NetHandler::*)(int, void *);
 
 void initialize_thread_for_quic_net(EThread *thread);
 
@@ -53,7 +53,7 @@ struct QUICPollCont : public Continuation {
 
   QUICPollCont(Ptr<ProxyMutex> &m);
   QUICPollCont(Ptr<ProxyMutex> &m, NetHandler *nh);
-  ~QUICPollCont();
+  ~QUICPollCont() override;
   int pollEvent(int, Event *);
 
 public:
@@ -73,10 +73,10 @@ private:
 #endif
 };
 
-static inline QUICPollCont *
+[[maybe_unused]] static inline QUICPollCont *
 get_QUICPollCont(EThread *t)
 {
-  return (QUICPollCont *)ETHREAD_GET_PTR(t, quic_NetProcessor.quicPollCont_offset);
+  return static_cast<QUICPollCont *> ETHREAD_GET_PTR(t, quic_NetProcessor.quicPollCont_offset);
 }
 
 extern ClassAllocator<QUICPollEvent> quicPollEventAllocator;
