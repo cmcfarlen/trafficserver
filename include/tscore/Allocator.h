@@ -227,7 +227,7 @@ using Allocator = FreelistAllocator;
   Allocator for Class objects.
 
 */
-template <class C, bool Destruct_on_free_ = false> class ClassAllocator : public Allocator
+template <class C, bool Destruct_on_free_ = false, typename BaseAllocator = Allocator> class ClassAllocator : public BaseAllocator
 {
 public:
   using Value_type                   = C;
@@ -238,7 +238,7 @@ public:
   C *
   alloc(Args &&... args)
   {
-    void *ptr = alloc_void();
+    void *ptr = this->alloc_void();
 
     ::new (ptr) C(std::forward<Args>(args)...);
     return reinterpret_cast<C *>(ptr);
@@ -254,7 +254,7 @@ public:
   {
     destroy_if_enabled(ptr);
 
-    free_void(ptr);
+    this->free_void(ptr);
   }
 
   /**
@@ -265,7 +265,7 @@ public:
     @param alignment of objects must be a power of 2.
   */
   ClassAllocator(const char *name, unsigned int chunk_size = 128, unsigned int alignment = 16)
-    : Allocator(name, static_cast<unsigned int>(RND16(sizeof(C))), chunk_size, static_cast<unsigned int>(RND16(alignment)))
+    : BaseAllocator(name, static_cast<unsigned int>(RND16(sizeof(C))), chunk_size, static_cast<unsigned int>(RND16(alignment)))
   {
   }
 
