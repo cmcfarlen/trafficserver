@@ -53,6 +53,21 @@ TEST_CASE("allocator", "")
   alloc.free(p);
 }
 
+template <typename A, int N>
+inline void
+alloc_churn(A &alloc)
+{
+  std::array<void *, N> pointers;
+
+  for (int n = 0; n < N; n++) {
+    auto *p     = alloc.alloc_void();
+    pointers[n] = p;
+  }
+  for (auto *p : pointers) {
+    alloc.free_void(p);
+  }
+}
+
 template <typename A>
 int
 run_benchmark()
@@ -65,22 +80,18 @@ run_benchmark()
   auto large  = A("large", 4096 * 100);
 
   auto f = [](TestAllocator &a, A &small, A &medium, A &large) {
-    for (int i = 0; i < 10000; ++i) {
-      auto *p = a.alloc_void();
-      a.free_void(p);
+    for (int i = 0; i < 1000; ++i) {
+      alloc_churn<TestAllocator, 50>(a);
     }
 
     for (int i = 0; i < 1000; ++i) {
-      auto *p = small.alloc_void();
-      small.free_void(p);
+      alloc_churn<A, 5>(small);
     }
     for (int i = 0; i < 500; ++i) {
-      auto *p = medium.alloc_void();
-      medium.free_void(p);
+      alloc_churn<A, 2>(medium);
     }
     for (int i = 0; i < 100; ++i) {
-      auto *p = large.alloc_void();
-      large.free_void(p);
+      alloc_churn<A, 1>(large);
     }
   };
 
@@ -102,6 +113,7 @@ TEST_CASE("allocate bench", "")
   BENCHMARK("freelistallocator") { return run_benchmark<FreelistAllocator>(); };
   BENCHMARK("mallocallocator") { return run_benchmark<MallocAllocator>(); };
 }
+
 template <typename A>
 int
 run_benchmark_advice()
