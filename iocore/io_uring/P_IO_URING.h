@@ -21,4 +21,29 @@ Linux io_uring helper library
   limitations under the License.
  */
 
+
 #pragma once
+
+#include "I_Continuation.h"
+#include "I_EThread.h"
+#include "P_UnixNet.h"
+#include <liburing.h>
+
+class IOUringNetHandler : public NetHandler
+{
+public:
+  IOUringNetHandler() {}
+  // EThread::LoopTailHandler
+  void signalActivity() override;
+  int waitForActivity(ink_hrtime timeout) override;
+
+  // noncopyable
+  IOUringNetHandler(const IOUringNetHandler &) = delete;
+  IOUringNetHandler &operator=(const IOUringNetHandler &) = delete;
+
+  struct io_uring ring;
+  // number of submissions pending completion
+  int pending = 0;
+};
+
+void initialize_thread_for_iouring(EThread *thread);
