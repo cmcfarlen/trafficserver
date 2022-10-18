@@ -42,6 +42,23 @@ ink_event_system_init(ts::ModuleVersion v)
 
   REC_EstablishStaticConfigInt32(thread_freelist_low_watermark, "proxy.config.allocator.thread_freelist_low_watermark");
 
+  int chunk_sizes[DEFAULT_BUFFER_SIZES] = {0};
+  char *chunk_sizes_string              = REC_ConfigReadString("proxy.config.allocator.iobuf_chunk_sizes");
+  if (chunk_sizes_string != nullptr) {
+    ts::TextView src(chunk_sizes_string, ts::TextView::npos);
+    int n = 0;
+    while (n < DEFAULT_BUFFER_SIZES && !src.empty()) {
+      ts::TextView token{src.take_prefix_at(' ')};
+      auto x = ts::svto_radix<10>(token);
+      if (token.empty() && x <= std::numeric_limits<int>::max()) {
+        chunk_sizes[n++] = x;
+      } else {
+        break;
+      }
+    }
+    ats_free(chunk_sizes_string);
+  }
+
 #ifdef MADV_DONTDUMP // This should only exist on Linux 3.4 and higher.
   RecBool dont_dump_enabled = true;
   RecGetRecordBool("proxy.config.allocator.dontdump_iobuffers", &dont_dump_enabled, false);
@@ -51,5 +68,5 @@ ink_event_system_init(ts::ModuleVersion v)
   }
 #endif
 
-  init_buffer_allocators(iobuffer_advice);
+  init_buffer_allocators(iobuffer_advice, chunk_sizes);
 }

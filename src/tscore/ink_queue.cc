@@ -451,17 +451,20 @@ ink_freelists_dump(FILE *f)
     f = stderr;
   }
 
-  fprintf(f, "     Allocated      |        In-Use      | Type Size  |   Free List Name\n");
-  fprintf(f, "--------------------|--------------------|------------|----------------------------------\n");
+  fprintf(f, "     Allocated      |   Allocated Count  |        In-Use      |    In-Use Count    | Type Size  | Chunk Size |   "
+             "Free List Name\n");
+  fprintf(f, "--------------------|--------------------|--------------------|--------------------|------------|------------|-------"
+             "---------------------------\n");
 
   uint64_t total_allocated = 0;
   uint64_t total_used      = 0;
   fll                      = freelists;
   while (fll) {
-    fprintf(f, " %18" PRIu64 " | %18" PRIu64 " | %10u | memory/%s\n",
+    fprintf(f, " %18" PRIu64 " | %18" PRIu64 " | %18" PRIu64 " | %18" PRIu64 " | %10u | %10u | memory/%s\n",
             static_cast<uint64_t>(fll->fl->allocated) * static_cast<uint64_t>(fll->fl->type_size),
-            static_cast<uint64_t>(fll->fl->used) * static_cast<uint64_t>(fll->fl->type_size), fll->fl->type_size,
-            fll->fl->name ? fll->fl->name : "<unknown>");
+            static_cast<uint64_t>(fll->fl->allocated),
+            static_cast<uint64_t>(fll->fl->used) * static_cast<uint64_t>(fll->fl->type_size), static_cast<uint64_t>(fll->fl->used),
+            fll->fl->type_size, fll->fl->chunk_size, fll->fl->name ? fll->fl->name : "<unknown>");
     total_allocated += static_cast<uint64_t>(fll->fl->allocated) * static_cast<uint64_t>(fll->fl->type_size);
     total_used += static_cast<uint64_t>(fll->fl->used) * static_cast<uint64_t>(fll->fl->type_size);
     fll = fll->next;
