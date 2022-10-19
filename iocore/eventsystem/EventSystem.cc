@@ -29,6 +29,7 @@
 ****************************************************************************/
 
 #include "P_EventSystem.h"
+#include "tscore/hugepages.h"
 
 void
 ink_event_system_init(ts::ModuleVersion v)
@@ -59,6 +60,10 @@ ink_event_system_init(ts::ModuleVersion v)
     ats_free(chunk_sizes_string);
   }
 
+  int hugepage_config = REC_ConfigReadInteger("proxy.config.allocator.iobuf_use_hugepages");
+
+  uint32_t use_hugepages = ats_hugepage_enabled() && hugepage_config == 1;
+
 #ifdef MADV_DONTDUMP // This should only exist on Linux 3.4 and higher.
   RecBool dont_dump_enabled = true;
   RecGetRecordBool("proxy.config.allocator.dontdump_iobuffers", &dont_dump_enabled, false);
@@ -68,5 +73,5 @@ ink_event_system_init(ts::ModuleVersion v)
   }
 #endif
 
-  init_buffer_allocators(iobuffer_advice, chunk_sizes);
+  init_buffer_allocators(iobuffer_advice, chunk_sizes, use_hugepages);
 }

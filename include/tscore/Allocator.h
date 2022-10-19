@@ -97,16 +97,18 @@ public:
     @param chunk_size number of units to be allocated if free pool is empty.
     @param alignment of objects must be a power of 2.
   */
-  FreelistAllocator(const char *name, unsigned int element_size, unsigned int chunk_size = 128, unsigned int alignment = 8)
+  FreelistAllocator(const char *name, unsigned int element_size, unsigned int chunk_size = 128, unsigned int alignment = 8,
+                    unsigned int use_hugepages = 0)
   {
-    ink_freelist_init(&fl, name, element_size, chunk_size, alignment);
+    ink_freelist_init(&fl, name, element_size, chunk_size, alignment, use_hugepages);
   }
 
   /** Re-initialize the parameters of the allocator. */
   void
-  re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, int advice)
+  re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, unsigned int use_hugepages,
+          int advice)
   {
-    ink_freelist_madvise_init(&this->fl, name, element_size, chunk_size, alignment, advice);
+    ink_freelist_madvise_init(&this->fl, name, element_size, chunk_size, alignment, use_hugepages, advice);
   }
 
   // Dummies
@@ -186,18 +188,22 @@ public:
     @param chunk_size number of units to be allocated if free pool is empty.
     @param alignment of objects must be a power of 2.
   */
-  MallocAllocator(const char *name, unsigned int element_size, unsigned int chunk_size = 128, unsigned int alignment = 8)
+  MallocAllocator(const char *name, unsigned int element_size, unsigned int chunk_size = 128, unsigned int alignment = 8,
+                  unsigned int use_hugepages = 0)
     : element_size(element_size), alignment(alignment), advice(0)
   {
   }
 
   /** Re-initialize the parameters of the allocator. */
   void
-  re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, int advice)
+  re_init(const char *name, unsigned int element_size, unsigned int chunk_size, unsigned int alignment, unsigned int use_hugepages,
+          int advice)
   {
     this->element_size = element_size;
     this->alignment    = alignment;
     this->advice       = advice;
+
+    // TODO(cmcfarlen): enable THP if available
   }
 
   // Dummies

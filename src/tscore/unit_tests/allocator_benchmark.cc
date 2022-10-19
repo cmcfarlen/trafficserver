@@ -126,7 +126,7 @@ run_benchmark_advice()
 #else
   advice = MADV_SEQUENTIAL;
 #endif
-  alloc.re_init("advice", 64 * 1024, 32, 8, advice);
+  alloc.re_init("advice", 64 * 1024, 32, 8, advice, 0);
 
   for (int i = 0; i < 1000; ++i) {
     auto *p = alloc.alloc_void();

@@ -43,7 +43,7 @@ int64_t max_iobuffer_size           = DEFAULT_BUFFER_SIZES - 1;
 // Initialization
 //
 void
-init_buffer_allocators(int iobuffer_advice, int chunk_sizes[DEFAULT_BUFFER_SIZES])
+init_buffer_allocators(int iobuffer_advice, int chunk_sizes[DEFAULT_BUFFER_SIZES], uint32_t use_hugepages)
 {
   for (int i = 0; i < DEFAULT_BUFFER_SIZES; i++) {
     int64_t s = DEFAULT_BUFFER_BASE_SIZE * ((static_cast<int64_t>(1)) << i);
@@ -57,8 +57,12 @@ init_buffer_allocators(int iobuffer_advice, int chunk_sizes[DEFAULT_BUFFER_SIZES
     }
 
     auto name = new char[64];
-    snprintf(name, 64, "ioBufAllocator[%d]", i);
-    ioBufAllocator[i].re_init(name, s, n, a, iobuffer_advice);
+    if (use_hugepages) {
+      snprintf(name, 64, "ioBufAllocatorHP[%d]", i);
+    } else {
+      snprintf(name, 64, "ioBufAllocator[%d]", i);
+    }
+    ioBufAllocator[i].re_init(name, s, n, a, use_hugepages, iobuffer_advice);
   }
 }
 
@@ -66,7 +70,7 @@ void
 init_buffer_allocators(int iobuffer_advice)
 {
   int chunk_sizes[DEFAULT_BUFFER_SIZES] = {0};
-  init_buffer_allocators(iobuffer_advice, chunk_sizes);
+  init_buffer_allocators(iobuffer_advice, chunk_sizes, 0);
 }
 
 //
