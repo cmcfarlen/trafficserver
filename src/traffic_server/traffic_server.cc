@@ -2117,7 +2117,7 @@ main(int /* argc ATS_UNUSED */, const char **argv)
     }
     HttpProxyPort::loadDefaultIfEmpty();
 
-    dnsProcessor.start(0, stacksize);
+    // dnsProcessor.start(0, stacksize);
     if (hostDBProcessor.start() < 0)
       Warning("bad hostdb or storage configuration, hostdb disabled");
 
