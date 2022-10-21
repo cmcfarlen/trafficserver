@@ -144,14 +144,15 @@ ink_freelist_init(InkFreeList **fl, const char *name, uint32_t type_size, uint32
   if (f->use_hugepages) {
     // for hugepages, always make the allocation alignment on a hugepage boundary
     f->alignment = ats_hugepage_size();
+    f->type_size = type_size;
   } else {
     if (f->alignment > ats_pagesize()) {
       f->alignment = ats_pagesize();
     }
+    // Make sure we align *all* the objects in the allocation, not just the first one
+    f->type_size = INK_ALIGN(type_size, f->alignment);
   }
   Debug(DEBUG_TAG "_init", "<%s> Alignment request/actual (%" PRIu32 "/%" PRIu32 ")", name, alignment, f->alignment);
-  // Make sure we align *all* the objects in the allocation, not just the first one
-  f->type_size = INK_ALIGN(type_size, f->alignment);
   Debug(DEBUG_TAG "_init", "<%s> Type Size request/actual (%" PRIu32 "/%" PRIu32 ")", name, type_size, f->type_size);
   if (f->use_hugepages) {
     f->chunk_size = INK_ALIGN(chunk_size * f->type_size, ats_hugepage_size()) / f->type_size;
