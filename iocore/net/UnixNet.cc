@@ -488,8 +488,8 @@ NetHandler::waitForActivity(ink_hrtime timeout)
 {
   EventIO *epd = nullptr;
 #if AIO_MODE == AIO_MODE_IO_URING
-  DiskHandler *dh = DiskHandler::local_context();
-  bool servicedh  = false;
+  IOUringContext *ur = IOUringContext::local_context();
+  bool servicedh     = false;
 #endif
 
   NET_INCREMENT_DYN_STAT(net_handler_run_stat);
@@ -498,7 +498,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
   process_enabled_list();
 
 #if AIO_MODE == AIO_MODE_IO_URING
-  dh->submit();
+  ur->submit();
 #endif
 
   // Polling event by PollCont
@@ -566,7 +566,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
 
 #if AIO_MODE == AIO_MODE_IO_URING
   if (servicedh) {
-    dh->service();
+    ur->service();
   }
 #endif
 
