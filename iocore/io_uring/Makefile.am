@@ -29,7 +29,6 @@ libinkuring_a_SOURCES = \
 	I_IO_URING.h \
 	P_IO_URING.h
 
-
 check_PROGRAMS = test_diskIO
 
 test_LD_FLAGS = \
