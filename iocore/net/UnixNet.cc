@@ -270,11 +270,13 @@ initialize_thread_for_net(EThread *thread)
   thread->ep->type = EVENTIO_ASYNC_SIGNAL;
 #if HAVE_EVENTFD
   thread->ep->start(pd, thread->evfd, nullptr, EVENTIO_READ);
-#if TS_USE_LINUX_IO_URING
-  thread->ep->start(pd, DiskHandler::local_context());
-#endif
 #else
   thread->ep->start(pd, thread->evpipe[0], nullptr, EVENTIO_READ);
+#endif
+
+#ifdef TS_USE_LINUX_IO_URING
+  nh->uring_evio.type = EVENTIO_IO_URING;
+  nh->uring_evio.start(pd, IOUringContext::local_context()->register_eventfd(), nullptr, EVENTIO_READ);
 #endif
 }
 
@@ -553,7 +555,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
     } else if (epd->type == EVENTIO_NETACCEPT) {
       this->thread->schedule_imm(epd->data.na);
 #if AIO_MODE == AIO_MODE_IO_URING
-    } else if (epd->type == EVENTIO_DISK) {
+    } else if (epd->type == EVENTIO_IO_URING) {
       servicedh = true;
 #endif
     }
