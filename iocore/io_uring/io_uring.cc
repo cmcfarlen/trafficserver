@@ -21,6 +21,10 @@ Linux io_uring helper library
   limitations under the License.
  */
 
+#include "tscore/Diags.h"
+#include "tscore/ink_hrtime.h"
+#include "I_IO_URING.h"
+
 #include <sys/eventfd.h>
 #include <atomic>
 #include <cstring>
@@ -36,6 +40,8 @@ std::atomic<uint64_t> io_uring_submissions = 0;
 std::atomic<uint64_t> io_uring_completions = 0;
 
 IOUringConfig IOUringContext::config;
+
+static constexpr auto TAG = "io_uring";
 
 void
 IOUringContext::set_config(const IOUringConfig &cfg)
@@ -69,6 +75,8 @@ IOUringContext::IOUringContext()
   if (config.sq_poll_ms && !(p.features & IORING_FEAT_SQPOLL_NONFIXED)) {
     throw std::runtime_error("No SQPOLL sharing with nonfixed");
   }
+
+  Debug(TAG, "initialized ring fd = %d", ring.ring_fd);
 
   // assign this handler to the thread
   // TODO(cmcfarlen): Assign in thread somewhere else
@@ -160,7 +168,6 @@ IOUringContext::submit_and_wait(ink_hrtime t)
     io_uring_cqe_seen(&ring, cqe);
 
     cqe = nullptr;
-    io_uring_peek_cqe(&ring, &cqe);
   }
 }
 
