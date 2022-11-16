@@ -1899,13 +1899,21 @@ HttpSM::state_http_server_open(int event, void *data)
 
   switch (event) {
   case NET_EVENT_OPEN: {
-    // Since the UnixNetVConnection::action_ or SocksEntry::action_ may be returned from netProcessor.connect_re, and the
-    // SocksEntry::action_ will be copied into UnixNetVConnection::action_ before call back NET_EVENT_OPEN from
-    // SocksEntry::free(), so we just compare the Continuation between pending_action and VC's action_.
-    _netvc                 = static_cast<NetVConnection *>(data);
-    _netvc_read_buffer     = new_MIOBuffer(HTTP_SERVER_RESP_HDR_BUFFER_INDEX);
-    _netvc_reader          = _netvc_read_buffer->alloc_reader();
-    UnixNetVConnection *vc = static_cast<UnixNetVConnection *>(_netvc);
+    NetVConnection *netvc        = static_cast<NetVConnection *>(data);
+    UnixNetVConnection *vc       = static_cast<UnixNetVConnection *>(data);
+    PoolableSession *new_session = this->create_server_session(netvc);
+    if (t_state.current.request_to == ResolveInfo::PARENT_PROXY) {
+      new_session->to_parent_proxy = true;
+      HTTP_INCREMENT_DYN_STAT(http_current_parent_proxy_connections_stat);
+      HTTP_INCREMENT_DYN_STAT(http_total_parent_proxy_connections_stat);
+    } else {
+      new_session->to_parent_proxy = false;
+    }
+    this->create_server_txn(new_session);
+
+    // Since the UnixNetVConnection::action_ or SocksEntry::action_ may be returned from netProcessor.connect, and the
+    // SocksEntry::action_ will be copied into UnixNetVConnection::action_ before call back NET_EVENT_OPEN from SocksEntry::free(),
+    // so we just compare the Continuation between pending_action and VC's action_.
     ink_release_assert(pending_action.empty() || pending_action.get_continuation() == vc->get_action()->continuation);
     pending_action = nullptr;
 
@@ -5309,7 +5317,7 @@ HttpSM::do_http_server_open(bool raw, bool only_direct)
   if (plugin_tunnel) {
     PluginVCCore *t           = plugin_tunnel;
     plugin_tunnel             = nullptr;
-    Action *pvc_action_handle = t->connect_re(this);
+    Action *pvc_action_handle = t->connect(this);
 
     // This connect call is always reentrant
     ink_release_assert(pvc_action_handle == ACTION_RESULT_DONE);
@@ -5456,14 +5464,14 @@ HttpSM::do_http_server_open(bool raw, bool only_direct)
         return;
       } else {
         // As this is in the non-sharing configuration, we want to close
-        // the existing connection and call connect_re to get a new one
+        // the existing connection and call connect to get a new one
         existing_ss->set_inactivity_timeout(HRTIME_SECONDS(t_state.txn_conf->keep_alive_no_activity_timeout_out));
         existing_ss->release(server_txn);
         ua_txn->attach_server_session(nullptr);
       }
     }
   }
-  // Otherwise, we release the existing connection and call connect_re
+  // Otherwise, we release the existing connection and call connect
   // to get a new one.
   // ua_txn is null when t_state.req_flavor == REQ_FLAVOR_SCHEDULED_UPDATE
   else if (ua_txn != nullptr) {
@@ -5697,7 +5705,7 @@ HttpSM::do_http_server_open(bool raw, bool only_direct)
     cont = this;
   }
   if (tls_upstream) {
-    SMDebug("http", "calling sslNetProcessor.connect_re");
+    SMDebug("http", "calling sslNetProcessor.connect");
 
     std::string_view sni_name = this->get_outbound_sni();
     if (sni_name.length() > 0) {
@@ -5716,14 +5724,14 @@ HttpSM::do_http_server_open(bool raw, bool only_direct)
       opt.set_ssl_servername(t_state.server_info.name);
     }
 
-    pending_action = sslNetProcessor.connect_re(cont,                                 // state machine or ConnectingEntry
-                                                &t_state.current.server->dst_addr.sa, // addr + port
-                                                &opt);
-  } else {
-    SMDebug("http", "calling netProcessor.connect_re");
-    pending_action = netProcessor.connect_re(cont,                                 // state machine or ConnectingEntry
+    pending_action = sslNetProcessor.connect(this,                                 // state machine
                                              &t_state.current.server->dst_addr.sa, // addr + port
                                              &opt);
+  } else {
+    SMDebug("http", "calling netProcessor.connect");
+    pending_action = netProcessor.connect(this,                                 // state machine
+                                          &t_state.current.server->dst_addr.sa, // addr + port
+                                          &opt);
   }
 
   return;

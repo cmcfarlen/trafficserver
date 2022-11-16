@@ -7295,7 +7295,7 @@ TSNetConnect(TSCont contp, sockaddr const *addr)
 
   FORCE_PLUGIN_SCOPED_MUTEX(contp);
 
-  return reinterpret_cast<TSAction>(netProcessor.connect_re(reinterpret_cast<INKContInternal *>(contp), addr, &opt));
+  return reinterpret_cast<TSAction>(netProcessor.connect(reinterpret_cast<INKContInternal *>(contp), addr, &opt));
 }
 
 TSAction
@@ -7312,7 +7312,7 @@ TSNetConnectTransparent(TSCont contp, sockaddr const *client_addr, sockaddr cons
 
   FORCE_PLUGIN_SCOPED_MUTEX(contp);
 
-  return reinterpret_cast<TSAction>(netProcessor.connect_re(reinterpret_cast<INKContInternal *>(contp), server_addr, &opt));
+  return reinterpret_cast<TSAction>(netProcessor.connect(reinterpret_cast<INKContInternal *>(contp), server_addr, &opt));
 }
 
 TSCont
