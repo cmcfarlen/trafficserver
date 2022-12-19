@@ -145,15 +145,30 @@ IOUringContext::service()
 }
 
 void
-IOUringContext::submit_and_wait(int ms)
+IOUringContext::submit_and_wait(ink_hrtime delay)
 {
-  ink_hrtime t              = ink_hrtime_from_msec(ms);
-  timespec ts               = ink_hrtime_to_timespec(t);
+  timespec ts               = ink_hrtime_to_timespec(delay);
   __kernel_timespec timeout = {ts.tv_sec, ts.tv_nsec};
   io_uring_cqe *cqe         = nullptr;
 
-  io_uring_submit_and_wait_timeout(&ring, &cqe, 1, &timeout, nullptr);
-  while (cqe) {
+  int ret;
+  if (delay == -1) {
+    ret = io_uring_submit(&ring);
+  } else {
+    ret = io_uring_submit_and_wait_timeout(&ring, &cqe, 1, &timeout, nullptr);
+  }
+  if (ret < 0) {
+    switch (ret) {
+    case -ETIME:
+    case -EINTR:
+    case -EAGAIN:
+      break;
+    default:
+      Fatal("io_uring_submit error: %s", strerror(-ret));
+    }
+  }
+
+  while (io_uring_peek_cqe(&ring, &cqe) == 0 && cqe != nullptr) {
     handle_cqe(cqe);
     io_uring_completions++;
     io_uring_cqe_seen(&ring, cqe);
