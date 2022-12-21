@@ -69,7 +69,9 @@ public:
     f(c->res);
   }
 
-  std::string id() const override {
+  std::string
+  id() const override
+  {
     return "holder";
   }
 
