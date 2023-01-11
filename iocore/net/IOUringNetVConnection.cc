@@ -94,7 +94,6 @@ IOUringNetVConnection::prep_read()
   int64_t rattempted = 0, total_read = 0;
   unsigned niov = 0;
   if (toread) {
-    // NOTE(cmcfarlen): Mo said this returns the wrong pointer after the first read
     IOBufferBlock *b = buf.writer()->first_write_block();
     niov             = 0;
     rattempted       = 0;
@@ -128,7 +127,6 @@ IOUringNetVConnection::prep_read()
     // TODO(mo): retain buffer blocks
 
     ++ops_in_flight;
-    // NOTE(cmcfarlen): second read gets -90 result
     io_uring_prep_recvmsg(sqe, con.fd, &read.msg, 0);
     Debug(TAG, "prep_recvmsg, op = %p", &read);
 
