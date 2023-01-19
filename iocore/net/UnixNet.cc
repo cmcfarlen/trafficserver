@@ -275,7 +275,7 @@ initialize_thread_for_net(EThread *thread)
 #endif
 
 #ifdef TS_USE_LINUX_IO_URING
-  nh->uring_evio.type = EVENTIO_IO_URING;
+  nh->uring_evio.type = EventIO::EVENTIO_IO_URING;
   nh->uring_evio.start(pd, IOUringContext::local_context()->register_eventfd(), nullptr, EVENTIO_READ);
 #endif
 }
@@ -489,7 +489,7 @@ int
 NetHandler::waitForActivity(ink_hrtime timeout)
 {
   EventIO *epd = nullptr;
-#if AIO_MODE == AIO_MODE_IO_URING
+#if TS_USE_LINUX_IO_URING
   IOUringContext *ur = IOUringContext::local_context();
   bool servicedh     = false;
 #endif
@@ -499,7 +499,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
 
   process_enabled_list();
 
-#if AIO_MODE == AIO_MODE_IO_URING
+#if TS_USE_LINUX_IO_URING
   ur->submit();
 #endif
 
@@ -554,12 +554,8 @@ NetHandler::waitForActivity(ink_hrtime timeout)
       net_signal_hook_callback(this->thread);
     } else if (epd->type == EventIO::EVENTIO_NETACCEPT) {
       this->thread->schedule_imm(reinterpret_cast<Continuation *>(epd->_user));
-#if AIO_MODE == AIO_MODE_IO_URING
-<<<<<<< HEAD
-    } else if (epd->type == EVENTIO_IO_URING) {
-=======
-    } else if (epd->type == EventIO::EVENTIO_DISK) {
->>>>>>> e04b3a861 (Substitute net threads for iouring threads)
+#if TS_USE_LINUX_IO_URING
+    } else if (epd->type == EventIO::EVENTIO_IO_URING) {
       servicedh = true;
 #endif
     }
@@ -570,7 +566,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
 
   process_ready_list();
 
-#if AIO_MODE == AIO_MODE_IO_URING
+#if TS_USE_LINUX_IO_URING
   if (servicedh) {
     ur->service();
   }
@@ -807,19 +803,3 @@ NetHandler::remove_from_active_queue(NetEvent *ne)
     --active_queue_size;
   }
 }
-<<<<<<< HEAD
-
-int
-EventIO::start(EventLoop l, DiskHandler *dh)
-{
-#if AIO_MODE == AIO_MODE_IO_URING
-  data.dh = dh;
-  int fd  = dh->register_eventfd();
-  type    = EVENTIO_IO_URING;
-  return start_common(l, fd, EVENTIO_READ);
-#else
-  return 1;
-#endif
-}
-=======
->>>>>>> e04b3a861 (Substitute net threads for iouring threads)

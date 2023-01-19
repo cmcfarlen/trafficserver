@@ -344,6 +344,4 @@ struct socks_conf_struct *NetProcessor::socks_conf_stuff = nullptr;
 int NetProcessor::accept_mss                             = 0;
 
 UnixNetProcessor unix_netProcessor;
-#if !TS_USE_LINUX_IO_URING
 NetProcessor &netProcessor = unix_netProcessor;
-#endif

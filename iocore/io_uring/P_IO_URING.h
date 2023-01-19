@@ -21,7 +21,6 @@ Linux io_uring helper library
   limitations under the License.
  */
 
-
 #pragma once
 
 #include "I_Continuation.h"
