@@ -553,7 +553,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
     } else if (epd->type == EventIO::EVENTIO_ASYNC_SIGNAL) {
       net_signal_hook_callback(this->thread);
     } else if (epd->type == EventIO::EVENTIO_NETACCEPT) {
-      this->thread->schedule_imm(reinterpret_cast<Continuation *>(epd->_user));
+      this->thread->schedule_imm(static_cast<NetAccept *>(epd->_user));
 #if TS_USE_LINUX_IO_URING
     } else if (epd->type == EventIO::EVENTIO_IO_URING) {
       servicedh = true;
