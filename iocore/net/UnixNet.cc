@@ -810,7 +810,7 @@ EventIO::start(EventLoop l, DiskHandler *dh)
 #if AIO_MODE == AIO_MODE_IO_URING
   data.dh = dh;
   int fd  = dh->register_eventfd();
-  type    = EVENTIO_DISK;
+  type    = EVENTIO_IO_URING;
   return start_common(l, fd, EVENTIO_READ);
 #else
   return 1;
