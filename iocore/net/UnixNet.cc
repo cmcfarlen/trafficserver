@@ -274,7 +274,7 @@ initialize_thread_for_net(EThread *thread)
   thread->ep->start(pd, thread->evpipe[0], nullptr, EVENTIO_READ);
 #endif
 
-#ifdef TS_USE_LINUX_IO_URING
+#if TS_USE_LINUX_IO_URING
   nh->uring_evio.type = EventIO::EVENTIO_IO_URING;
   nh->uring_evio.start(pd, IOUringContext::local_context()->register_eventfd(), nullptr, EVENTIO_READ);
 #endif

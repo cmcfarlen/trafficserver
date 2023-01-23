@@ -219,3 +219,34 @@ public:
 private:
   bool _disabled = false;
 };
+
+class VIOStrategy;
+class VIOCompletionTarget
+{
+public:
+  // return true to continue, false to stop
+  virtual bool progressRead(VIO *vio)  = 0;
+  virtual bool completeRead(VIO *vio)  = 0;
+  virtual bool progressWrite(VIO *vio) = 0;
+  virtual bool completeWrite(VIO *vio) = 0;
+  virtual bool completeConnect(VConnection *, VIOStrategy *);
+  virtual bool completeAccept(VConnection *, VIOStrategy *);
+};
+
+// Just signals the continuation for the callbacks
+class ContinuationVIOCompletionTarget : public VIOCompletionTarget
+{
+public:
+  ContinuationVIOCompletionTarget(Continuation *);
+};
+
+class VIOStrategy
+{
+public:
+  virtual VIO *read(VIOCompletionTarget *, int64_t nbytes, MIOBuffer *buf)             = 0;
+  virtual VIO *write(VIOCompletionTarget *, int64_t nbytes, MIOBuffer *buf)            = 0;
+  virtual Action *do_io_connect(VIOCompletionTarget *, int64_t nbytes, MIOBuffer *buf) = 0;
+  Action *connect(Continuation *cont, UnixNetVConnection **vc, sockaddr const *target, NetVCOptions *opt = nullptr);
+
+  virtual NetAccept *createNetAccept(const NetProcessor::AcceptOptions &opt);
+};
