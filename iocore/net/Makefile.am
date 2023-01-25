@@ -136,6 +136,7 @@ libinknet_a_SOURCES = \
 	I_UDPPacket.h \
 	Inline.cc \
 	I_SessionAccept.h \
+	I_PollerVIOStrategy.h \
 	YamlSNIConfig.h \
 	YamlSNIConfig.cc \
 	Net.cc \
@@ -209,7 +210,8 @@ libinknet_a_SOURCES = \
 	UnixNetVConnection.cc \
 	UnixUDPConnection.cc \
 	UnixUDPNet.cc \
-	SSLDynlock.cc
+	SSLDynlock.cc \
+	PollerVIOStrategy.cc
 
 if ENABLE_QUIC
 if USE_QUICHE

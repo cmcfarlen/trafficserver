@@ -78,27 +78,6 @@ EThread::EThread()
 EThread::EThread(ThreadType att, int anid) : id(anid), tt(att)
 {
   memset(thread_private, 0, PER_THREAD_DATA);
-#if HAVE_EVENTFD
-  evfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-  if (evfd < 0) {
-    if (errno == EINVAL) { // flags invalid for kernel <= 2.6.26
-      evfd = eventfd(0, 0);
-      if (evfd < 0) {
-        Fatal("EThread::EThread: %d=eventfd(0,0),errno(%d)", evfd, errno);
-      }
-    } else {
-      Fatal("EThread::EThread: %d=eventfd(0,EFD_NONBLOCK | EFD_CLOEXEC),errno(%d)", evfd, errno);
-    }
-  }
-#elif TS_USE_PORT
-/* We'll just port_send the event straight over the port. */
-#else
-  ink_release_assert(pipe(evpipe) >= 0);
-  fcntl(evpipe[0], F_SETFD, FD_CLOEXEC);
-  fcntl(evpipe[0], F_SETFL, O_NONBLOCK);
-  fcntl(evpipe[1], F_SETFD, FD_CLOEXEC);
-  fcntl(evpipe[1], F_SETFL, O_NONBLOCK);
-#endif
 }
 
 EThread::EThread(ThreadType att, Event *e) : tt(att), start_event(e)

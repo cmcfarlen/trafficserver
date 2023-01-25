@@ -220,33 +220,35 @@ private:
   bool _disabled = false;
 };
 
-class VIOStrategy;
-class VIOCompletionTarget
+class IOStrategy;
+class IOCompletionTarget
 {
 public:
   // return true to continue, false to stop
-  virtual bool progressRead(VIO *vio)  = 0;
-  virtual bool completeRead(VIO *vio)  = 0;
-  virtual bool progressWrite(VIO *vio) = 0;
-  virtual bool completeWrite(VIO *vio) = 0;
-  virtual bool completeConnect(VConnection *, VIOStrategy *);
-  virtual bool completeAccept(VConnection *, VIOStrategy *);
+  virtual bool progress(VIO *vio, int res) = 0;
+  virtual bool complete(VIO *vio, int res) = 0;
 };
 
 // Just signals the continuation for the callbacks
-class ContinuationVIOCompletionTarget : public VIOCompletionTarget
+class ContinuationVIOCompletionTarget : public IOCompletionTarget
 {
 public:
   ContinuationVIOCompletionTarget(Continuation *);
 };
 
-class VIOStrategy
+class IOStrategy
 {
 public:
-  virtual VIO *read(VIOCompletionTarget *, int64_t nbytes, MIOBuffer *buf)             = 0;
-  virtual VIO *write(VIOCompletionTarget *, int64_t nbytes, MIOBuffer *buf)            = 0;
-  virtual Action *do_io_connect(VIOCompletionTarget *, int64_t nbytes, MIOBuffer *buf) = 0;
-  Action *connect(Continuation *cont, UnixNetVConnection **vc, sockaddr const *target, NetVCOptions *opt = nullptr);
+  virtual VIO *read(IOCompletionTarget *, int64_t nbytes, MIOBuffer *buf)  = 0;
+  virtual VIO *write(IOCompletionTarget *, int64_t nbytes, MIOBuffer *buf) = 0;
+  virtual Action *accept(IOCompletionTarget *, int flags)                  = 0;
+  virtual Action *connect(IOCompletionTarget *, sockaddr const *target)    = 0;
 
-  virtual NetAccept *createNetAccept(const NetProcessor::AcceptOptions &opt);
+  virtual void read_disable(VIO *)  = 0;
+  virtual void write_disable(VIO *) = 0;
+
+  // NetHandler will need these to defer to
+  virtual int waitForActivity(ink_hrtime timeout) = 0;
+  virtual void signalActivity()                   = 0;
+  virtual void init_for_thread(EThread *)         = 0;
 };

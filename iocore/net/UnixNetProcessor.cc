@@ -265,7 +265,7 @@ UnixNetProcessor::connect(Continuation *cont, UnixNetVConnection ** /* avc */, s
   return connect_re(cont, target, opt);
 }
 
-struct PollCont;
+class PollCont;
 
 // This needs to be called before the ET_NET threads are started.
 void

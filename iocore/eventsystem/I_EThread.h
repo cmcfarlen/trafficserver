@@ -334,13 +334,6 @@ public:
   void free_event(Event *e);
   LoopTailHandler *tail_cb = &DEFAULT_TAIL_HANDLER;
 
-#if HAVE_EVENTFD
-  int evfd = ts::NO_FD;
-#else
-  int evpipe[2];
-#endif
-  EventIO *ep = nullptr;
-
   ThreadType tt = REGULAR;
   /** Initial event to call, before any scheduling.
 

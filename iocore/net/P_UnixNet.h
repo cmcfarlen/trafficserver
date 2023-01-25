@@ -78,19 +78,6 @@ extern int http_accept_port_number;
 // function prototype needed for SSLUnixNetVConnection
 unsigned int net_next_connection_number();
 
-struct PollCont : public Continuation {
-  NetHandler *net_handler;
-  PollDescriptor *pollDescriptor;
-  PollDescriptor *nextPollDescriptor;
-  int poll_timeout;
-
-  PollCont(Ptr<ProxyMutex> &m, int pt = net_config_poll_timeout);
-  PollCont(Ptr<ProxyMutex> &m, NetHandler *nh, int pt = net_config_poll_timeout);
-  ~PollCont() override;
-  int pollEvent(int, Event *);
-  void do_poll(ink_hrtime timeout);
-};
-
 /**
   NetHandler is the processor of NetEvent for the Net sub-system. The NetHandler
   is the core component of the Net sub-system. Once started, it is responsible
@@ -158,20 +145,8 @@ public:
   // If we don't get rid of @a trigger_event we should remove @a thread.
   EThread *thread      = nullptr;
   Event *trigger_event = nullptr;
-  QueM(NetEvent, NetState, read, ready_link) read_ready_list;
-  QueM(NetEvent, NetState, write, ready_link) write_ready_list;
-  Que(NetEvent, open_link) open_list;
-  DList(NetEvent, cop_link) cop_list;
-  ASLLM(NetEvent, NetState, read, enable_link) read_enable_list;
-  ASLLM(NetEvent, NetState, write, enable_link) write_enable_list;
-  Que(NetEvent, keep_alive_queue_link) keep_alive_queue;
-  uint32_t keep_alive_queue_size = 0;
-  Que(NetEvent, active_queue_link) active_queue;
-  uint32_t active_queue_size = 0;
 
-#ifdef TS_USE_LINUX_IO_URING
-  EventIO uring_evio;
-#endif
+  IOStrategy *io_strategy;
 
   /// configuration settings for managing the active and keep-alive queues
   struct Config {
@@ -219,73 +194,18 @@ public:
 
   int mainNetEvent(int event, Event *data);
   int waitForActivity(ink_hrtime timeout) override;
-  void process_enabled_list();
-  void process_ready_list();
-  void manage_keep_alive_queue();
-  bool manage_active_queue(NetEvent *ne, bool ignore_queue_size);
-  void add_to_keep_alive_queue(NetEvent *ne);
-  void remove_from_keep_alive_queue(NetEvent *ne);
-  bool add_to_active_queue(NetEvent *ne);
-  void remove_from_active_queue(NetEvent *ne);
 
   /// Per process initialization logic.
   static void init_for_process();
   /// Update configuration values that are per thread and depend on other configuration values.
   void configure_per_thread_values();
 
-  /**
-    Start to handle read & write event on a NetEvent.
-    Initial the socket fd of ne for polling system.
-    Only be called when holding the mutex of this NetHandler.
-
-    @param ne NetEvent to be managed by this NetHandler.
-    @return 0 on success, ne->nh set to this NetHandler.
-            -ERRNO on failure.
-   */
-  int startIO(NetEvent *ne);
-  /**
-    Stop to handle read & write event on a NetEvent.
-    Remove the socket fd of ne from polling system.
-    Only be called when holding the mutex of this NetHandler and must call stopCop(ne) first.
-
-    @param ne NetEvent to be released.
-    @return ne->nh set to nullptr.
-   */
-  void stopIO(NetEvent *ne);
-
-  /**
-    Start to handle active timeout and inactivity timeout on a NetEvent.
-    Put the ne into open_list. All NetEvents in the open_list is checked for timeout by InactivityCop.
-    Only be called when holding the mutex of this NetHandler and must call startIO(ne) first.
-
-    @param ne NetEvent to be managed by InactivityCop
-   */
-  void startCop(NetEvent *ne);
-  /**
-    Stop to handle active timeout and inactivity on a NetEvent.
-    Remove the ne from open_list and cop_list.
-    Also remove the ne from keep_alive_queue and active_queue if its context is IN.
-    Only be called when holding the mutex of this NetHandler.
-
-    @param ne NetEvent to be released.
-   */
-  void stopCop(NetEvent *ne);
-
   // Signal the epoll_wait to terminate.
   void signalActivity() override;
-
-  /**
-    Release a ne and free it.
-
-    @param ne NetEvent to be detached.
-   */
-  void free_netevent(NetEvent *ne);
 
   NetHandler();
 
 private:
-  void _close_ne(NetEvent *ne, ink_hrtime now, int &handle_event, int &closed, int &total_idle_time, int &total_idle_count);
-
   /// Static method used as the callback for runtime configuration updates.
   static int update_nethandler_config(const char *name, RecDataT, RecData data, void *);
 };
@@ -295,6 +215,8 @@ get_NetHandler(EThread *t)
 {
   return static_cast<NetHandler *>(ETHREAD_GET_PTR(t, unix_netProcessor.netHandler_offset));
 }
+
+// TODO(cmcfarlen): remove this and use IOStrategy interface
 static inline PollCont *
 get_PollCont(EThread *t)
 {
@@ -438,116 +360,4 @@ check_transient_accept_error(int res)
     }
 #endif
   }
-}
-
-/** Disable reading on the NetEvent @a ne.
-     @param nh Nethandler that owns @a ne.
-     @param ne The @c NetEvent to modify.
-
-     - If write is already disable, also disable the inactivity timeout.
-     - clear read enabled flag.
-     - Remove the @c epoll READ flag.
-     - Take @a ne out of the read ready list.
-*/
-[[maybe_unused]] static inline void
-read_disable(NetHandler *nh, NetEvent *ne)
-{
-  if (!ne->write.enabled) {
-    // Clear the next scheduled inactivity time, but don't clear inactivity_timeout_in,
-    // so the current timeout is used when the NetEvent is reenabled and not the default inactivity timeout
-    ne->next_inactivity_timeout_at = 0;
-    Debug("socket", "read_disable updating inactivity_at %" PRId64 ", NetEvent=%p", ne->next_inactivity_timeout_at, ne);
-  }
-  ne->read.enabled = 0;
-  nh->read_ready_list.remove(ne);
-  ne->ep.modify(-EVENTIO_READ);
-}
-
-/** Disable writing on the NetEvent @a ne.
-     @param nh Nethandler that owns @a ne.
-     @param ne The @c NetEvent to modify.
-
-     - If read is already disable, also disable the inactivity timeout.
-     - clear write enabled flag.
-     - Remove the @c epoll WRITE flag.
-     - Take @a ne out of the write ready list.
-*/
-[[maybe_unused]] static inline void
-write_disable(NetHandler *nh, NetEvent *ne)
-{
-  if (!ne->read.enabled) {
-    // Clear the next scheduled inactivity time, but don't clear inactivity_timeout_in,
-    // so the current timeout is used when the NetEvent is reenabled and not the default inactivity timeout
-    ne->next_inactivity_timeout_at = 0;
-    Debug("socket", "write_disable updating inactivity_at %" PRId64 ", NetEvent=%p", ne->next_inactivity_timeout_at, ne);
-  }
-  ne->write.enabled = 0;
-  nh->write_ready_list.remove(ne);
-  ne->ep.modify(-EVENTIO_WRITE);
-}
-
-TS_INLINE int
-NetHandler::startIO(NetEvent *ne)
-{
-  ink_assert(this->mutex->thread_holding == this_ethread());
-  ink_assert(ne->get_thread() == this_ethread());
-  int res = 0;
-
-  PollDescriptor *pd = get_PollDescriptor(this->thread);
-  if (ne->ep.start(pd, ne, EVENTIO_READ | EVENTIO_WRITE) < 0) {
-    res = errno;
-    // EEXIST should be ok, though it should have been cleared before we got back here
-    if (errno != EEXIST) {
-      Debug("iocore_net", "NetHandler::startIO : failed on EventIO::start, errno = [%d](%s)", errno, strerror(errno));
-      return -res;
-    }
-  }
-
-  if (ne->read.triggered == 1) {
-    read_ready_list.enqueue(ne);
-  }
-  ne->nh = this;
-  return res;
-}
-
-TS_INLINE void
-NetHandler::stopIO(NetEvent *ne)
-{
-  ink_release_assert(ne->nh == this);
-
-  ne->ep.stop();
-
-  read_ready_list.remove(ne);
-  write_ready_list.remove(ne);
-  if (ne->read.in_enabled_list) {
-    read_enable_list.remove(ne);
-    ne->read.in_enabled_list = 0;
-  }
-  if (ne->write.in_enabled_list) {
-    write_enable_list.remove(ne);
-    ne->write.in_enabled_list = 0;
-  }
-
-  ne->nh = nullptr;
-}
-
-TS_INLINE void
-NetHandler::startCop(NetEvent *ne)
-{
-  ink_assert(this->mutex->thread_holding == this_ethread());
-  ink_release_assert(ne->nh == this);
-  ink_assert(!open_list.in(ne));
-
-  open_list.enqueue(ne);
-}
-
-TS_INLINE void
-NetHandler::stopCop(NetEvent *ne)
-{
-  ink_release_assert(ne->nh == this);
-
-  open_list.remove(ne);
-  cop_list.remove(ne);
-  remove_from_keep_alive_queue(ne);
-  remove_from_active_queue(ne);
 }

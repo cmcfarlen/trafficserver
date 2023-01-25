@@ -27,9 +27,12 @@
 
 #include "I_EventSystem.h"
 #include "P_EventIO.h"
+#include "P_UnixNetState.h"
 
 class NetHandler;
+class EventIOStrategy;
 
+// NOTE(cmcfarlen): This class is only for EventIOStrategy
 // this class is used to NetHandler to hide some detail of NetEvent.
 // To combine the `UDPConenction` and `NetEvent`. NetHandler should
 // callback to net_read_io or net_write_io when net event happen.
@@ -38,9 +41,9 @@ class NetEvent : public EventIOUser
 public:
   NetEvent() = default;
   virtual ~NetEvent() {}
-  virtual void net_read_io(NetHandler *nh, EThread *lthread)  = 0;
-  virtual void net_write_io(NetHandler *nh, EThread *lthread) = 0;
-  virtual void free(EThread *t)                               = 0;
+  virtual void net_read_io(EventIOStrategy *nh, EThread *lthread)  = 0;
+  virtual void net_write_io(EventIOStrategy *nh, EThread *lthread) = 0;
+  virtual void free(EThread *t)                                    = 0;
 
   // since we want this class to be independent from VConnection, Continutaion. There should be
   // a pure virtual function which connect sub class and NetHandler.
@@ -68,9 +71,10 @@ public:
   NetState read{};
   NetState write{};
 
-  int closed     = 0;
-  int error      = 0;
-  NetHandler *nh = nullptr;
+  int closed           = 0;
+  int error            = 0;
+  NetHandler *nh       = nullptr;
+  EventIOStrategy *ios = nullptr;
 
   /** The explicitly set inactivity timeout duration in seconds.
    *

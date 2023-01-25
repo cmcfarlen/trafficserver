@@ -334,7 +334,7 @@ public:
   UDPNetHandler(bool enable_gso);
 };
 
-struct PollCont;
+class PollCont;
 static inline PollCont *
 get_UDPPollCont(EThread *t)
 {

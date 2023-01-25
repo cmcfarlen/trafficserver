@@ -216,6 +216,7 @@ NetAccept::accept_per_thread(int event, void *ep)
   } else {
     SET_HANDLER(&NetAccept::acceptEvent);
   }
+
   PollDescriptor *pd = get_PollDescriptor(this_ethread());
   if (this->ep.start(pd, this, EVENTIO_READ) < 0) {
     Fatal("[NetAccept::accept_per_thread]:error starting EventIO");
