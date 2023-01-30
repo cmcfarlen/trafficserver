@@ -30,9 +30,6 @@
 // For Stat Pages
 #include "StatPages.h"
 
-int net_accept_number = 0;
-NetProcessor::AcceptOptions const NetProcessor::DEFAULT_ACCEPT_OPTIONS;
-
 NetProcessor::AcceptOptions &
 NetProcessor::AcceptOptions::reset()
 {
@@ -55,6 +52,8 @@ NetProcessor::AcceptOptions::reset()
   f_proxy_protocol      = false;
   return *this;
 }
+int net_accept_number = 0;
+NetProcessor::AcceptOptions const NetProcessor::DEFAULT_ACCEPT_OPTIONS;
 
 int net_connection_number = 1;
 
@@ -319,7 +318,7 @@ UnixNetProcessor::init_socks()
 // Virtual function allows creation of an
 // SSLNetAccept or NetAccept transparent to NetProcessor.
 NetAccept *
-UnixNetProcessor::createNetAccept(const NetProcessor::AcceptOptions &opt)
+UnixNetProcessor::createNetAccept(const AcceptOptions &opt)
 {
   return new NetAccept(opt);
 }

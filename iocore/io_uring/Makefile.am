@@ -22,7 +22,7 @@ AM_CPPFLAGS += \
 	-I$(abs_top_srcdir)/lib \
 	$(TS_INCLUDES)
 
-noinst_LIBRARIES = libinkuring.a
+noinst_LIBRARIES =
 
 libinkuring_a_SOURCES = \
 	io_uring.cc \

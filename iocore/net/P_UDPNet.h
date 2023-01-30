@@ -34,6 +34,7 @@
 #include "I_UDPNet.h"
 
 // added by YTS Team, yamsat
+class PollCont;
 static inline PollCont *get_UDPPollCont(EThread *);
 
 #include "P_UnixUDPConnection.h"
@@ -334,7 +335,6 @@ public:
   UDPNetHandler(bool enable_gso);
 };
 
-class PollCont;
 static inline PollCont *
 get_UDPPollCont(EThread *t)
 {

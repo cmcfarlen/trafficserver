@@ -28,6 +28,7 @@
 #include "I_EventSystem.h"
 #include "I_Socks.h"
 #include "I_NetVConnection.h"
+#include "I_NetIOStrategy.h"
 struct socks_conf_struct;
 #define NET_CONNECT_TIMEOUT 30
 
@@ -37,6 +38,8 @@ struct NetVCOptions;
   This is the heart of the Net system. Provides common network APIs,
   like accept, connect etc. It performs network I/O on behalf of a
   state machine.
+
+  Actual IO is deferred to a NetIOStrategy implementation
 
 */
 class NetProcessor : public Processor
@@ -227,15 +230,10 @@ public:
   NetProcessor(const NetProcessor &)            = delete;
   NetProcessor &operator=(const NetProcessor &) = delete;
 
-private:
-  /** @note Not implemented. */
-  virtual int
-  stop()
-  {
-    ink_release_assert(!"NetProcessor::stop not implemented");
-    return 1;
-  }
+  // defer operations to
+  NetIOStrategy *strategy;
 
+private:
   // implementation of accept()
   virtual Action *accept_internal(Continuation *cont, int fd, AcceptOptions const &opt) = 0;
 };

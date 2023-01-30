@@ -219,36 +219,3 @@ public:
 private:
   bool _disabled = false;
 };
-
-class IOStrategy;
-class IOCompletionTarget
-{
-public:
-  // return true to continue, false to stop
-  virtual bool progress(VIO *vio, int res) = 0;
-  virtual bool complete(VIO *vio, int res) = 0;
-};
-
-// Just signals the continuation for the callbacks
-class ContinuationVIOCompletionTarget : public IOCompletionTarget
-{
-public:
-  ContinuationVIOCompletionTarget(Continuation *);
-};
-
-class IOStrategy
-{
-public:
-  virtual VIO *read(IOCompletionTarget *, int64_t nbytes, MIOBuffer *buf)  = 0;
-  virtual VIO *write(IOCompletionTarget *, int64_t nbytes, MIOBuffer *buf) = 0;
-  virtual Action *accept(IOCompletionTarget *, int flags)                  = 0;
-  virtual Action *connect(IOCompletionTarget *, sockaddr const *target)    = 0;
-
-  virtual void read_disable(VIO *)  = 0;
-  virtual void write_disable(VIO *) = 0;
-
-  // NetHandler will need these to defer to
-  virtual int waitForActivity(ink_hrtime timeout) = 0;
-  virtual void signalActivity()                   = 0;
-  virtual void init_for_thread(EThread *)         = 0;
-};

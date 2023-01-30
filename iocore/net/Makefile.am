@@ -38,7 +38,7 @@ AM_CPPFLAGS += \
 
 TESTS = $(check_PROGRAMS)
 
-check_PROGRAMS = test_certlookup test_UDPNet test_libinknet
+check_PROGRAMS = test_certlookup test_UDPNet test_libinknet test_EventIOStrategy
 noinst_LIBRARIES = libinknet.a
 
 test_certlookup_LDFLAGS = \
@@ -110,6 +110,31 @@ test_libinknet_LDFLAGS = \
 	@YAMLCPP_LDFLAGS@ \
 	@SWOC_LDFLAGS@
 
+test_EventIOStrategy_SOURCES = \
+	EventIOStrategy.cc \
+	unit_tests/test_EventIOStrategy.cc
+
+test_EventIOStrategy_CPPFLAGS = \
+	$(AM_CPPFLAGS) \
+	$(iocore_include_dirs) \
+	-I$(abs_top_srcdir)/tests/include \
+	-I$(abs_top_srcdir)/proxy \
+	-I$(abs_top_srcdir)/proxy/hdrs \
+	-I$(abs_top_srcdir)/proxy/http \
+	-I$(abs_top_srcdir)/mgmt \
+	-I$(abs_top_srcdir)/mgmt/utils \
+	@OPENSSL_INCLUDES@
+
+test_EventIOStrategy_LDFLAGS = \
+	$(top_builddir)/src/tscore/libtscore.la \
+	$(top_builddir)/iocore/eventsystem/libinkevent.a \
+	$(top_builddir)/iocore/io_uring/libinkuring.a \
+	$(top_builddir)/src/records/librecords_p.a \
+	$(top_builddir)/mgmt/libmgmt_p.la \
+	@AM_LDFLAGS@ \
+	@OPENSSL_LDFLAGS@ \
+	@YAMLCPP_LDFLAGS@
+
 test_libinknet_LDADD = \
 	libinknet.a \
 	$(top_builddir)/iocore/eventsystem/libinkevent.a \
@@ -127,8 +152,10 @@ libinknet_a_SOURCES = \
 	BoringSSLUtils.cc \
 	BoringSSLUtils.h \
 	Connection.cc \
+	EventIOStrategy.cc \
 	I_Net.h \
 	I_NetProcessor.h \
+	I_NetIOStrategy.h \
 	I_NetVConnection.h \
 	I_Socks.h \
 	I_UDPConnection.h \
@@ -140,6 +167,7 @@ libinknet_a_SOURCES = \
 	YamlSNIConfig.h \
 	YamlSNIConfig.cc \
 	Net.cc \
+	NetIOStrategy.cc \
 	NetVConnection.cc \
 	P_ALPNSupport.h \
 	P_SNIActionPerformer.h \

@@ -138,6 +138,7 @@ public:
     return false;
   }
 
+#ifdef REMOVE_ME
   // NetEvent
   virtual void net_read_io(NetHandler *nh, EThread *lthread) override;
   virtual void net_write_io(NetHandler *nh, EThread *lthread) override;
@@ -176,6 +177,7 @@ public:
   {
     return this->control_flags;
   }
+#endif
 
   virtual int64_t load_buffer_and_write(int64_t towrite, MIOBufferAccessor &buf, int64_t &total_written, int &needs);
   void readDisable(NetHandler *nh);

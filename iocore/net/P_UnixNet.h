@@ -28,6 +28,7 @@
 #include "tscore/ink_platform.h"
 #include "I_EThread.h"
 #include "I_Continuation.h"
+#include "I_IOStrategy.h"
 #include "P_Net.h"
 #include "P_EventIO.h"
 #include "P_UnixNetProcessor.h"
@@ -214,19 +215,6 @@ static inline NetHandler *
 get_NetHandler(EThread *t)
 {
   return static_cast<NetHandler *>(ETHREAD_GET_PTR(t, unix_netProcessor.netHandler_offset));
-}
-
-// TODO(cmcfarlen): remove this and use IOStrategy interface
-static inline PollCont *
-get_PollCont(EThread *t)
-{
-  return static_cast<PollCont *>(ETHREAD_GET_PTR(t, unix_netProcessor.pollCont_offset));
-}
-static inline PollDescriptor *
-get_PollDescriptor(EThread *t)
-{
-  PollCont *p = get_PollCont(t);
-  return p->pollDescriptor;
 }
 
 enum ThrottleType {

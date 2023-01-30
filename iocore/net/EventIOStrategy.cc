@@ -22,14 +22,168 @@ A brief file description
 
  */
 
+#include "I_Continuation.h"
 #include "P_EventIO.h"
 #include "NetEvent.h"
 #include "I_EventIOStrategy.h"
+#include "P_Net.h"
 
 #if TS_USE_LINUX_IO_URING
 #include "I_IO_URING.h"
-#include "P_UnixNet.h"
+//#include "P_UnixNet.h"
 #endif
+
+struct PollDescriptor;
+struct PollCont : public Continuation {
+  EventIOStrategy *io_strategy;
+  PollDescriptor *pollDescriptor;
+  PollDescriptor *nextPollDescriptor;
+  int poll_timeout;
+
+  PollCont(Ptr<ProxyMutex> &m, int pt = 10);
+  PollCont(Ptr<ProxyMutex> &m, EventIOStrategy *nh, int pt = 10);
+  ~PollCont() override;
+  int pollEvent(int, Event *);
+  void do_poll(ink_hrtime timeout);
+};
+class InactivityCop;
+
+class EventIOStrategyImpl
+{
+public:
+  EventIOStrategyImpl(Ptr<ProxyMutex> &, EventIOStrategy *, const EventIOStrategyConfig &);
+  void remove_from_keep_alive_queue(NetEvent *ne);
+  void remove_from_active_queue(NetEvent *ne);
+  void manage_keep_alive_queue();
+  bool manage_active_queue(NetEvent *ne, bool ignore_queue_size = false);
+  void add_to_keep_alive_queue(NetEvent *ne);
+  bool add_to_active_queue(NetEvent *ne);
+  void _close_ne(NetEvent *ne, ink_hrtime now, int &handle_event, int &closed, int &total_idle_time, int &total_idle_count);
+
+  void stopCop(NetEvent *ne);
+  void startCop(NetEvent *ne);
+  void stopIO(NetEvent *ne);
+  int startIO(NetEvent *ne);
+
+  inline void
+  increment_dyn_stat(int stat, int64_t by = 1)
+  {
+    if (config.stat_block) {
+      RecIncrRawStatSum(config.stat_block, mutex->thread_holding, stat, by);
+    }
+  }
+  inline void
+  decrement_dyn_stat(int stat, int64_t by = 1)
+  {
+    increment_dyn_stat(stat, -by);
+  }
+
+  /**
+    Release a ne and free it.
+
+  @param ne NetEvent to be detached.
+      */
+  void free_netevent(NetEvent *ne);
+
+  QueM(NetEvent, NetState, read, ready_link) read_ready_list;
+  QueM(NetEvent, NetState, write, ready_link) write_ready_list;
+  ASLLM(NetEvent, NetState, read, enable_link) read_enable_list;
+  ASLLM(NetEvent, NetState, write, enable_link) write_enable_list;
+  Que(NetEvent, open_link) open_list;
+  DList(NetEvent, cop_link) cop_list;
+  Que(NetEvent, keep_alive_queue_link) keep_alive_queue;
+  uint32_t keep_alive_queue_size = 0;
+  Que(NetEvent, active_queue_link) active_queue;
+  uint32_t active_queue_size = 0;
+#ifdef TS_USE_LINUX_IO_URING
+  EventIO uring_evio;
+#endif
+  EThread *thread     = nullptr;
+  PollCont *poll_cont = nullptr;
+  EventIO *ep         = nullptr;
+#if HAVE_EVENTFD
+  int evfd = ts::NO_FD;
+#else
+  int evpipe[2];
+#endif
+
+  // this is needed for the stat macros
+  Ptr<ProxyMutex> mutex;
+  EventIOStrategyConfig config;
+  EventIOStrategy *parent;
+};
+
+EventIOStrategyImpl::EventIOStrategyImpl(Ptr<ProxyMutex> &m, EventIOStrategy *parent, const EventIOStrategyConfig &config)
+  : mutex(m), config(config), parent(parent)
+{
+  poll_cont = new PollCont(m, config.poll_timeout);
+}
+
+TS_INLINE int
+EventIOStrategyImpl::startIO(NetEvent *ne)
+{
+  ink_assert(this->mutex->thread_holding == this_ethread());
+  ink_assert(ne->get_thread() == this_ethread());
+  int res = 0;
+
+  PollDescriptor *pd = this->poll_cont->pollDescriptor;
+  if (ne->ep.start(pd, ne, EVENTIO_READ | EVENTIO_WRITE) < 0) {
+    res = errno;
+    // EEXIST should be ok, though it should have been cleared before we got back here
+    if (errno != EEXIST) {
+      Debug("iocore_net", "NetHandler::startIO : failed on EventIO::start, errno = [%d](%s)", errno, strerror(errno));
+      return -res;
+    }
+  }
+
+  if (ne->read.triggered == 1) {
+    read_ready_list.enqueue(ne);
+  }
+  ne->ios = parent;
+  return res;
+}
+
+TS_INLINE void
+EventIOStrategyImpl::stopIO(NetEvent *ne)
+{
+  ink_release_assert(ne->ios == parent);
+
+  ne->ep.stop();
+
+  read_ready_list.remove(ne);
+  write_ready_list.remove(ne);
+  if (ne->read.in_enabled_list) {
+    read_enable_list.remove(ne);
+    ne->read.in_enabled_list = 0;
+  }
+  if (ne->write.in_enabled_list) {
+    write_enable_list.remove(ne);
+    ne->write.in_enabled_list = 0;
+  }
+
+  ne->nh = nullptr;
+}
+
+TS_INLINE void
+EventIOStrategyImpl::startCop(NetEvent *ne)
+{
+  ink_assert(this->mutex->thread_holding == this_ethread());
+  ink_release_assert(ne->ios == parent);
+  ink_assert(!open_list.in(ne));
+
+  open_list.enqueue(ne);
+}
+
+TS_INLINE void
+EventIOStrategyImpl::stopCop(NetEvent *ne)
+{
+  ink_release_assert(ne->ios == parent);
+
+  open_list.remove(ne);
+  cop_list.remove(ne);
+  remove_from_keep_alive_queue(ne);
+  remove_from_active_queue(ne);
+}
 
 // INKqa10496
 // One Inactivity cop runs on each thread once every second and
@@ -37,8 +191,8 @@ A brief file description
 class InactivityCop : public Continuation
 {
 public:
-  EventIOStrategy *ios;
-  explicit InactivityCop(Ptr<ProxyMutex> &m, EventIOStrategy *ios) : Continuation(m.get()), ios(ios)
+  EventIOStrategyImpl *ios;
+  explicit InactivityCop(Ptr<ProxyMutex> &m, EventIOStrategyImpl *ios) : Continuation(m.get()), ios(ios)
   {
     SET_HANDLER(&InactivityCop::check_inactivity);
   }
@@ -48,16 +202,16 @@ public:
   {
     (void)event;
     ink_hrtime now = Thread::get_hrtime();
-    NetHandler &nh = *get_NetHandler(this_ethread());
 
     Debug("inactivity_cop_check", "Checking inactivity on Thread-ID #%d", this_ethread()->id);
     // The rest NetEvents in cop_list which are not triggered between InactivityCop runs.
     // Use pop() to catch any closes caused by callbacks.
     while (NetEvent *ne = ios->cop_list.pop()) {
+      NetHandler &nh = *ne->nh;
       // If we cannot get the lock don't stop just keep cleaning
       MUTEX_TRY_LOCK(lock, ne->get_mutex(), this_ethread());
       if (!lock.is_locked()) {
-        NET_INCREMENT_DYN_STAT(inactivity_cop_lock_acquire_failure_stat);
+        ios->increment_dyn_stat(inactivity_cop_lock_acquire_failure_stat);
         continue;
       }
 
@@ -74,19 +228,19 @@ public:
         Debug("inactivity_cop", "vc: %p inactivity timeout not set, setting a default of %d", ne,
               nh.config.default_inactivity_timeout);
         ne->set_default_inactivity_timeout(HRTIME_SECONDS(nh.config.default_inactivity_timeout));
-        NET_INCREMENT_DYN_STAT(default_inactivity_timeout_applied_stat);
+        ios->increment_dyn_stat(default_inactivity_timeout_applied_stat);
       }
 
       if (ne->next_inactivity_timeout_at && ne->next_inactivity_timeout_at < now) {
         if (ne->is_default_inactivity_timeout()) {
           // track the connections that timed out due to default inactivity
-          NET_INCREMENT_DYN_STAT(default_inactivity_timeout_count_stat);
+          ios->increment_dyn_stat(default_inactivity_timeout_count_stat);
         }
         if (ios->keep_alive_queue.in(ne)) {
           // only stat if the connection is in keep-alive, there can be other inactivity timeouts
           ink_hrtime diff = (now - (ne->next_inactivity_timeout_at - ne->inactivity_timeout_in)) / HRTIME_SECOND;
-          NET_SUM_DYN_STAT(keep_alive_queue_timeout_total_stat, diff);
-          NET_INCREMENT_DYN_STAT(keep_alive_queue_timeout_count_stat);
+          ios->increment_dyn_stat(keep_alive_queue_timeout_total_stat, diff);
+          ios->increment_dyn_stat(keep_alive_queue_timeout_count_stat);
         }
         Debug("inactivity_cop_verbose", "ne: %p now: %" PRId64 " timeout at: %" PRId64 " timeout in: %" PRId64, ne,
               ink_hrtime_to_sec(now), ne->next_inactivity_timeout_at, ne->inactivity_timeout_in);
@@ -123,7 +277,7 @@ EventIOStrategy::net_signal_hook_callback()
 {
 #if HAVE_EVENTFD
   uint64_t counter;
-  ATS_UNUSED_RETURN(::read(evfd, &counter, sizeof(uint64_t)));
+  ATS_UNUSED_RETURN(::read(impl->evfd, &counter, sizeof(uint64_t)));
 #elif TS_USE_PORT
   /* Nothing to drain or do */
 #else
@@ -148,19 +302,19 @@ EventIOStrategy::waitForActivity(ink_hrtime timeout)
 #endif
 
   // Polling event by PollCont
-  PollCont *p = get_PollCont(this->thread);
+  PollCont *p = impl->poll_cont;
   p->do_poll(timeout);
 
   // Get & Process polling result
-  PollDescriptor *pd = get_PollDescriptor(this->thread);
+  PollDescriptor *pd = p->pollDescriptor;
   NetEvent *ne       = nullptr;
   for (int x = 0; x < pd->result; x++) {
     epd = static_cast<EventIO *> get_ev_data(pd, x);
     if (epd->type == EventIO::EVENTIO_READWRITE_VC) {
       ne = static_cast<NetEvent *>(epd->_user);
       // Remove triggered NetEvent from cop_list because it won't be timeout before next InactivityCop runs.
-      if (cop_list.in(ne)) {
-        cop_list.remove(ne);
+      if (impl->cop_list.in(ne)) {
+        impl->cop_list.remove(ne);
       }
       int flags = get_ev_events(pd, x);
       if (flags & (EVENTIO_ERROR)) {
@@ -168,14 +322,14 @@ EventIOStrategy::waitForActivity(ink_hrtime timeout)
       }
       if (flags & (EVENTIO_READ)) {
         ne->read.triggered = 1;
-        if (!read_ready_list.in(ne)) {
-          read_ready_list.enqueue(ne);
+        if (!impl->read_ready_list.in(ne)) {
+          impl->read_ready_list.enqueue(ne);
         }
       }
       if (flags & (EVENTIO_WRITE)) {
         ne->write.triggered = 1;
-        if (!write_ready_list.in(ne)) {
-          write_ready_list.enqueue(ne);
+        if (!impl->write_ready_list.in(ne)) {
+          impl->write_ready_list.enqueue(ne);
         }
       } else if (!(flags & (EVENTIO_READ))) {
         Debug("iocore_net_main", "Unhandled epoll event: 0x%04x", flags);
@@ -183,21 +337,23 @@ EventIOStrategy::waitForActivity(ink_hrtime timeout)
         // Anything else would be surprising
         ink_assert((flags & ~(EVENTIO_ERROR)) == 0);
         ne->write.triggered = 1;
-        if (!write_ready_list.in(ne)) {
-          write_ready_list.enqueue(ne);
+        if (!impl->write_ready_list.in(ne)) {
+          impl->write_ready_list.enqueue(ne);
         }
       }
     } else if (epd->type == EventIO::EVENTIO_DNS_CONNECTION) {
+      /*
       if (epd->_user != nullptr) {
         static_cast<DNSConnection *>(epd->_user)->trigger(); // Make sure the DNSHandler for this con knows we triggered
 #if defined(USE_EDGE_TRIGGER)
         epd->refresh(EVENTIO_READ);
 #endif
       }
+       */
     } else if (epd->type == EventIO::EVENTIO_ASYNC_SIGNAL) {
       net_signal_hook_callback();
     } else if (epd->type == EventIO::EVENTIO_NETACCEPT) {
-      this->thread->schedule_imm(static_cast<NetAccept *>(epd->_user));
+      impl->thread->schedule_imm(static_cast<NetAccept *>(epd->_user));
 #if TS_USE_LINUX_IO_URING
     } else if (epd->type == EventIO::EVENTIO_IO_URING) {
       servicedh = true;
@@ -224,7 +380,7 @@ EventIOStrategy::signalActivity()
 {
 #if HAVE_EVENTFD
   uint64_t counter = 1;
-  ATS_UNUSED_RETURN(::write(evfd, &counter, sizeof(uint64_t)));
+  ATS_UNUSED_RETURN(::write(impl->evfd, &counter, sizeof(uint64_t)));
 #elif TS_USE_PORT
   PollDescriptor *pd = get_PollDescriptor(thread);
   ATS_UNUSED_RETURN(port_send(pd->port_fd, 0, thread->ep));
@@ -242,23 +398,23 @@ EventIOStrategy::process_enabled_list()
 {
   NetEvent *ne = nullptr;
 
-  SListM(NetEvent, NetState, read, enable_link) rq(read_enable_list.popall());
+  SListM(NetEvent, NetState, read, enable_link) rq(impl->read_enable_list.popall());
   while ((ne = rq.pop())) {
     ne->ep.modify(EVENTIO_READ);
     ne->ep.refresh(EVENTIO_READ);
     ne->read.in_enabled_list = 0;
     if ((ne->read.enabled && ne->read.triggered) || ne->closed) {
-      read_ready_list.in_or_enqueue(ne);
+      impl->read_ready_list.in_or_enqueue(ne);
     }
   }
 
-  SListM(NetEvent, NetState, write, enable_link) wq(write_enable_list.popall());
+  SListM(NetEvent, NetState, write, enable_link) wq(impl->write_enable_list.popall());
   while ((ne = wq.pop())) {
     ne->ep.modify(EVENTIO_WRITE);
     ne->ep.refresh(EVENTIO_WRITE);
     ne->write.in_enabled_list = 0;
     if ((ne->write.enabled && ne->write.triggered) || ne->closed) {
-      write_ready_list.in_or_enqueue(ne);
+      impl->write_ready_list.in_or_enqueue(ne);
     }
   }
 }
@@ -273,15 +429,15 @@ EventIOStrategy::process_ready_list()
 
 #if defined(USE_EDGE_TRIGGER)
   // NetEvent *
-  while ((ne = read_ready_list.dequeue())) {
+  while ((ne = impl->read_ready_list.dequeue())) {
     // Initialize the thread-local continuation flags
     set_cont_flags(ne->get_control_flags());
     if (ne->closed) {
-      free_netevent(ne);
+      impl->free_netevent(ne);
     } else if (ne->read.enabled && ne->read.triggered) {
-      ne->net_read_io(this, this->thread);
+      ne->net_read_io(this, this->impl->thread);
     } else if (!ne->read.enabled) {
-      read_ready_list.remove(ne);
+      impl->read_ready_list.remove(ne);
 #if defined(solaris)
       if (ne->read.triggered && ne->write.enabled) {
         ne->ep.modify(-EVENTIO_READ);
@@ -291,14 +447,14 @@ EventIOStrategy::process_ready_list()
 #endif
     }
   }
-  while ((ne = write_ready_list.dequeue())) {
+  while ((ne = impl->write_ready_list.dequeue())) {
     set_cont_flags(ne->get_control_flags());
     if (ne->closed) {
-      free_netevent(ne);
+      impl->free_netevent(ne);
     } else if (ne->write.enabled && ne->write.triggered) {
-      ne->net_write_io(this, this->thread);
+      ne->net_write_io(this, impl->thread);
     } else if (!ne->write.enabled) {
-      write_ready_list.remove(ne);
+      impl->write_ready_list.remove(ne);
 #if defined(solaris)
       if (ne->write.triggered && ne->read.enabled) {
         ne->ep.modify(-EVENTIO_WRITE);
@@ -334,13 +490,13 @@ EventIOStrategy::process_ready_list()
 // Function used to release a NetEvent and free it.
 //
 void
-EventIOStrategy::free_netevent(NetEvent *ne)
+EventIOStrategyImpl::free_netevent(NetEvent *ne)
 {
   EThread *t = this->thread;
 
   ink_assert(t == this_ethread());
   ink_release_assert(ne->get_thread() == t);
-  ink_release_assert(ne->ios == this);
+  ink_release_assert(ne->ios == parent);
 
   // Release ne from InactivityCop
   stopCop(ne);
@@ -350,18 +506,19 @@ EventIOStrategy::free_netevent(NetEvent *ne)
   ne->free(t);
 }
 
-EventIOStrategy::EventIOStrategy(Ptr<ProxyMutex> &m) : mutex(m)
+EventIOStrategy::EventIOStrategy(Ptr<ProxyMutex> &m, const EventIOStrategyConfig &config)
+  : impl(new EventIOStrategyImpl(m, this, config))
 {
 #if HAVE_EVENTFD
-  evfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
-  if (evfd < 0) {
+  impl->evfd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+  if (impl->evfd < 0) {
     if (errno == EINVAL) { // flags invalid for kernel <= 2.6.26
-      evfd = eventfd(0, 0);
-      if (evfd < 0) {
-        Fatal("EThread::EThread: %d=eventfd(0,0),errno(%d)", evfd, errno);
+      impl->evfd = eventfd(0, 0);
+      if (impl->evfd < 0) {
+        Fatal("EThread::EThread: %d=eventfd(0,0),errno(%d)", impl->evfd, errno);
       }
     } else {
-      Fatal("EThread::EThread: %d=eventfd(0,EFD_NONBLOCK | EFD_CLOEXEC),errno(%d)", evfd, errno);
+      Fatal("EThread::EThread: %d=eventfd(0,EFD_NONBLOCK | EFD_CLOEXEC),errno(%d)", impl->evfd, errno);
     }
   }
 #elif TS_USE_PORT
@@ -380,31 +537,28 @@ EventIOStrategy::EventIOStrategy(Ptr<ProxyMutex> &m) : mutex(m)
 void
 EventIOStrategy::init_for_thread(EThread *thread)
 {
-  this->thread = thread;
+  impl->thread = thread;
 
   // TODO(cmcfarlen): remove this from EThread storage
-  poll_cont          = new PollCont(thread->mutex, this);
-  PollDescriptor *pd = poll_cont->pollDescriptor;
+  impl->poll_cont    = new PollCont(thread->mutex, this, impl->config.poll_timeout);
+  PollDescriptor *pd = impl->poll_cont->pollDescriptor;
 
-  ep = static_cast<EventIO *>(ats_malloc(sizeof(EventIO)));
-  new (ep) EventIO();
-  ep->type = EventIO::EVENTIO_ASYNC_SIGNAL;
+  impl->ep = static_cast<EventIO *>(ats_malloc(sizeof(EventIO)));
+  new (impl->ep) EventIO();
+  impl->ep->type = EventIO::EVENTIO_ASYNC_SIGNAL;
 
 #if HAVE_EVENTFD
-  ep->start(pd, evfd, nullptr, EVENTIO_READ);
+  impl->ep->start(pd, impl->evfd, nullptr, EVENTIO_READ);
 #else
   thread->ep->start(pd, thread->evpipe[0], nullptr, EVENTIO_READ);
 #endif
 
-  InactivityCop *inactivityCop = new InactivityCop(get_NetHandler(thread)->mutex, this);
-  int cop_freq                 = 1;
-
-  REC_ReadConfigInteger(cop_freq, "proxy.config.net.inactivity_check_frequency");
-  thread->schedule_every(inactivityCop, HRTIME_SECONDS(cop_freq));
+  InactivityCop *inactivityCop = new InactivityCop(impl->mutex, impl);
+  thread->schedule_every(inactivityCop, HRTIME_SECONDS(impl->config.inactivity_check_frequency));
 
 #if TS_USE_LINUX_IO_URING
-  uring_evio.type = EventIO::EVENTIO_IO_URING;
-  uring_evio.start(pd, IOUringContext::local_context()->register_eventfd(), nullptr, EVENTIO_READ);
+  impl->uring_evio.type = EventIO::EVENTIO_IO_URING;
+  impl->uring_evio.start(pd, IOUringContext::local_context()->register_eventfd(), nullptr, EVENTIO_READ);
 #endif
 }
 
@@ -446,15 +600,16 @@ PollCont::do_poll(ink_hrtime timeout)
 {
   if (likely(io_strategy)) {
     /* checking to see whether there are connections on the ready_queue (either read or write) that need processing [ebalsa] */
-    if (likely(!io_strategy->read_ready_list.empty() || !io_strategy->write_ready_list.empty() ||
-               !io_strategy->read_enable_list.empty() || !io_strategy->write_enable_list.empty())) {
-      Debug("iocore_net_poll", "rrq: %d, wrq: %d, rel: %d, wel: %d", io_strategy->read_ready_list.empty(),
-            io_strategy->write_ready_list.empty(), io_strategy->read_enable_list.empty(), io_strategy->write_enable_list.empty());
+    if (likely(!io_strategy->impl->read_ready_list.empty() || !io_strategy->impl->write_ready_list.empty() ||
+               !io_strategy->impl->read_enable_list.empty() || !io_strategy->impl->write_enable_list.empty())) {
+      Debug("iocore_net_poll", "rrq: %d, wrq: %d, rel: %d, wel: %d", io_strategy->impl->read_ready_list.empty(),
+            io_strategy->impl->write_ready_list.empty(), io_strategy->impl->read_enable_list.empty(),
+            io_strategy->impl->write_enable_list.empty());
       poll_timeout = 0; // poll immediately returns -- we have triggered stuff to process right now
     } else if (timeout >= 0) {
       poll_timeout = ink_hrtime_to_msec(timeout);
     } else {
-      poll_timeout = net_config_poll_timeout;
+      poll_timeout = 10; // TODO(cmcfarlen): pass in config - net_config_poll_timeout;
     }
   }
 // wait for fd's to trigger, or don't wait if timeout is 0
@@ -504,7 +659,7 @@ PollCont::do_poll(ink_hrtime timeout)
 }
 
 void
-EventIOStrategy::add_to_keep_alive_queue(NetEvent *ne)
+EventIOStrategyImpl::add_to_keep_alive_queue(NetEvent *ne)
 {
   Debug("net_queue", "NetEvent: %p", ne);
   ink_assert(mutex->thread_holding == this_ethread());
@@ -524,7 +679,7 @@ EventIOStrategy::add_to_keep_alive_queue(NetEvent *ne)
 }
 
 void
-EventIOStrategy::remove_from_keep_alive_queue(NetEvent *ne)
+EventIOStrategyImpl::remove_from_keep_alive_queue(NetEvent *ne)
 {
   Debug("net_queue", "NetEvent: %p", ne);
   ink_assert(mutex->thread_holding == this_ethread());
@@ -535,7 +690,7 @@ EventIOStrategy::remove_from_keep_alive_queue(NetEvent *ne)
   }
 }
 bool
-EventIOStrategy::add_to_active_queue(NetEvent *ne)
+EventIOStrategyImpl::add_to_active_queue(NetEvent *ne)
 {
   NetHandler *nh = ne->nh;
   Debug("net_queue", "NetEvent: %p", ne);
@@ -556,7 +711,7 @@ EventIOStrategy::add_to_active_queue(NetEvent *ne)
   } else {
     if (active_queue_full) {
       // there is no room left in the queue
-      NET_SUM_DYN_STAT(net_requests_max_throttled_in_stat, 1);
+      increment_dyn_stat(net_requests_max_throttled_in_stat, 1);
       return false;
     }
     // in the keep-alive queue or no queue, new to this queue
@@ -569,7 +724,7 @@ EventIOStrategy::add_to_active_queue(NetEvent *ne)
 }
 
 void
-EventIOStrategy::remove_from_active_queue(NetEvent *ne)
+EventIOStrategyImpl::remove_from_active_queue(NetEvent *ne)
 {
   Debug("net_queue", "NetEvent: %p", ne);
   ink_assert(mutex->thread_holding == this_ethread());
@@ -581,7 +736,7 @@ EventIOStrategy::remove_from_active_queue(NetEvent *ne)
 }
 
 bool
-EventIOStrategy::manage_active_queue(NetEvent *enabling_ne, bool ignore_queue_size)
+EventIOStrategyImpl::manage_active_queue(NetEvent *enabling_ne, bool ignore_queue_size)
 {
   NetHandler *nh                 = enabling_ne->nh;
   const int total_connections_in = active_queue_size + keep_alive_queue_size;
@@ -633,16 +788,15 @@ EventIOStrategy::manage_active_queue(NetEvent *enabling_ne, bool ignore_queue_si
 }
 
 void
-EventIOStrategy::manage_keep_alive_queue()
+EventIOStrategyImpl::manage_keep_alive_queue()
 {
-  NetHandler *nh                = get_NetHandler(this->thread);
   uint32_t total_connections_in = active_queue_size + keep_alive_queue_size;
   ink_hrtime now                = Thread::get_hrtime();
 
   Debug("v_net_queue", "max_connections_per_thread_in: %d total_connections_in: %d active_queue_size: %d keep_alive_queue_size: %d",
-        nh->max_connections_per_thread_in, total_connections_in, active_queue_size, keep_alive_queue_size);
+        config.max_connections_per_thread_in, total_connections_in, active_queue_size, keep_alive_queue_size);
 
-  if (!nh->max_connections_per_thread_in || total_connections_in <= nh->max_connections_per_thread_in) {
+  if (!config.max_connections_per_thread_in || total_connections_in <= config.max_connections_per_thread_in) {
     return;
   }
 
@@ -657,21 +811,21 @@ EventIOStrategy::manage_keep_alive_queue()
     _close_ne(ne, now, handle_event, closed, total_idle_time, total_idle_count);
 
     total_connections_in = active_queue_size + keep_alive_queue_size;
-    if (total_connections_in <= nh->max_connections_per_thread_in) {
+    if (total_connections_in <= config.max_connections_per_thread_in) {
       break;
     }
   }
 
   if (total_idle_count > 0) {
     Debug("net_queue", "max cons: %d active: %d idle: %d already closed: %d, close event: %d mean idle: %d",
-          nh->max_connections_per_thread_in, total_connections_in, keep_alive_queue_size, closed, handle_event,
+          config.max_connections_per_thread_in, total_connections_in, keep_alive_queue_size, closed, handle_event,
           total_idle_time / total_idle_count);
   }
 }
 
 void
-EventIOStrategy::_close_ne(NetEvent *ne, ink_hrtime now, int &handle_event, int &closed, int &total_idle_time,
-                           int &total_idle_count)
+EventIOStrategyImpl::_close_ne(NetEvent *ne, ink_hrtime now, int &handle_event, int &closed, int &total_idle_time,
+                               int &total_idle_count)
 {
   if (ne->get_thread() != this_ethread()) {
     return;
@@ -684,8 +838,8 @@ EventIOStrategy::_close_ne(NetEvent *ne, ink_hrtime now, int &handle_event, int 
   if (diff > 0) {
     total_idle_time += diff;
     ++total_idle_count;
-    NET_SUM_DYN_STAT(keep_alive_queue_timeout_total_stat, diff);
-    NET_INCREMENT_DYN_STAT(keep_alive_queue_timeout_count_stat);
+    increment_dyn_stat(keep_alive_queue_timeout_total_stat, diff);
+    increment_dyn_stat(keep_alive_queue_timeout_count_stat);
   }
   Debug("net_queue", "closing connection NetEvent=%p idle: %u now: %" PRId64 " at: %" PRId64 " in: %" PRId64 " diff: %" PRId64, ne,
         keep_alive_queue_size, ink_hrtime_to_sec(now), ink_hrtime_to_sec(ne->next_inactivity_timeout_at),
@@ -729,8 +883,7 @@ vio_to_ne(VIO *)
 void
 EventIOStrategy::read_disable(VIO *vio)
 {
-  NetEvent *ne   = vio_to_ne(vio);
-  NetHandler *nh = ne->nh;
+  NetEvent *ne = vio_to_ne(vio);
   if (!ne->write.enabled) {
     // Clear the next scheduled inactivity time, but don't clear inactivity_timeout_in,
     // so the current timeout is used when the NetEvent is reenabled and not the default inactivity timeout
@@ -738,7 +891,7 @@ EventIOStrategy::read_disable(VIO *vio)
     Debug("socket", "read_disable updating inactivity_at %" PRId64 ", NetEvent=%p", ne->next_inactivity_timeout_at, ne);
   }
   ne->read.enabled = 0;
-  read_ready_list.remove(ne);
+  impl->read_ready_list.remove(ne);
   ne->ep.modify(-EVENTIO_READ);
 }
 
@@ -754,8 +907,7 @@ EventIOStrategy::read_disable(VIO *vio)
 void
 EventIOStrategy::write_disable(VIO *vio)
 {
-  NetEvent *ne   = vio_to_ne(vio);
-  NetHandler *nh = ne->nh;
+  NetEvent *ne = vio_to_ne(vio);
   if (!ne->read.enabled) {
     // Clear the next scheduled inactivity time, but don't clear inactivity_timeout_in,
     // so the current timeout is used when the NetEvent is reenabled and not the default inactivity timeout
@@ -763,6 +915,554 @@ EventIOStrategy::write_disable(VIO *vio)
     Debug("socket", "write_disable updating inactivity_at %" PRId64 ", NetEvent=%p", ne->next_inactivity_timeout_at, ne);
   }
   ne->write.enabled = 0;
-  write_ready_list.remove(ne);
+  impl->write_ready_list.remove(ne);
   ne->ep.modify(-EVENTIO_WRITE);
 }
+
+VIO *
+EventIOStrategy::read(IOCompletionTarget *, int fd, int64_t nbytes, MIOBuffer *buf)
+{
+  return nullptr;
+}
+VIO *
+EventIOStrategy::write(IOCompletionTarget *, int fd, int64_t nbytes, MIOBuffer *buf)
+{
+  return nullptr;
+}
+Action *
+EventIOStrategy::accept(IOCompletionTarget *, int fd, int flags)
+{
+  return nullptr;
+}
+Action *
+EventIOStrategy::connect(IOCompletionTarget *, sockaddr const *target)
+{
+  return nullptr;
+}
+
+// TODO(cmcfarlen): encapsulate all of this nonsense
+
+#ifdef FIX_THIS_SHIT
+//
+// Reschedule a UnixNetVConnection by moving it
+// onto or off of the ready_list
+//
+static inline void
+read_reschedule(NetHandler *nh, UnixNetVConnection *vc)
+{
+  vc->ep.refresh(EVENTIO_READ);
+  if (vc->read.triggered && vc->read.enabled) {
+    nh->read_ready_list.in_or_enqueue(vc);
+  } else {
+    nh->read_ready_list.remove(vc);
+  }
+}
+
+static inline void
+write_reschedule(NetHandler *nh, UnixNetVConnection *vc)
+{
+  vc->ep.refresh(EVENTIO_WRITE);
+  if (vc->write.triggered && vc->write.enabled) {
+    nh->write_ready_list.in_or_enqueue(vc);
+  } else {
+    nh->write_ready_list.remove(vc);
+  }
+}
+
+void
+net_activity(UnixNetVConnection *vc, EThread *thread)
+{
+  Debug("socket", "net_activity updating inactivity %" PRId64 ", NetVC=%p", vc->inactivity_timeout_in, vc);
+  (void)thread;
+  if (vc->inactivity_timeout_in) {
+    vc->next_inactivity_timeout_at = Thread::get_hrtime() + vc->inactivity_timeout_in;
+  } else {
+    vc->next_inactivity_timeout_at = 0;
+  }
+}
+
+//
+// Signal an event
+//
+static inline int
+read_signal_and_update(int event, UnixNetVConnection *vc)
+{
+  vc->recursion++;
+  if (vc->read.vio.cont && vc->read.vio.mutex == vc->read.vio.cont->mutex) {
+    vc->read.vio.cont->handleEvent(event, &vc->read.vio);
+  } else {
+    if (vc->read.vio.cont) {
+      Note("read_signal_and_update: mutexes are different? vc=%p, event=%d", vc, event);
+    }
+    switch (event) {
+    case VC_EVENT_EOS:
+    case VC_EVENT_ERROR:
+    case VC_EVENT_ACTIVE_TIMEOUT:
+    case VC_EVENT_INACTIVITY_TIMEOUT:
+      Debug("inactivity_cop", "event %d: null read.vio cont, closing vc %p", event, vc);
+      vc->closed = 1;
+      break;
+    default:
+      Error("Unexpected event %d for vc %p", event, vc);
+      ink_release_assert(0);
+      break;
+    }
+  }
+  if (!--vc->recursion && vc->closed) {
+    /* BZ  31932 */
+    ink_assert(vc->thread == this_ethread());
+    vc->nh->free_netevent(vc);
+    return EVENT_DONE;
+  } else {
+    return EVENT_CONT;
+  }
+}
+
+static inline int
+write_signal_and_update(int event, UnixNetVConnection *vc)
+{
+  vc->recursion++;
+  if (vc->write.vio.cont && vc->write.vio.mutex == vc->write.vio.cont->mutex) {
+    vc->write.vio.cont->handleEvent(event, &vc->write.vio);
+  } else {
+    if (vc->write.vio.cont) {
+      Note("write_signal_and_update: mutexes are different? vc=%p, event=%d", vc, event);
+    }
+    switch (event) {
+    case VC_EVENT_EOS:
+    case VC_EVENT_ERROR:
+    case VC_EVENT_ACTIVE_TIMEOUT:
+    case VC_EVENT_INACTIVITY_TIMEOUT:
+      Debug("inactivity_cop", "event %d: null write.vio cont, closing vc %p", event, vc);
+      vc->closed = 1;
+      break;
+    default:
+      Error("Unexpected event %d for vc %p", event, vc);
+      ink_release_assert(0);
+      break;
+    }
+  }
+  if (!--vc->recursion && vc->closed) {
+    /* BZ  31932 */
+    ink_assert(vc->thread == this_ethread());
+    vc->nh->free_netevent(vc);
+    return EVENT_DONE;
+  } else {
+    return EVENT_CONT;
+  }
+}
+
+static inline int
+read_signal_done(int event, NetHandler *nh, UnixNetVConnection *vc)
+{
+  vc->read.enabled = 0;
+  if (read_signal_and_update(event, vc) == EVENT_DONE) {
+    return EVENT_DONE;
+  } else {
+    read_reschedule(nh, vc);
+    return EVENT_CONT;
+  }
+}
+
+static inline int
+write_signal_done(int event, NetHandler *nh, UnixNetVConnection *vc)
+{
+  vc->write.enabled = 0;
+  if (write_signal_and_update(event, vc) == EVENT_DONE) {
+    return EVENT_DONE;
+  } else {
+    write_reschedule(nh, vc);
+    return EVENT_CONT;
+  }
+}
+
+static inline int
+read_signal_error(NetHandler *nh, UnixNetVConnection *vc, int lerrno)
+{
+  vc->lerrno = lerrno;
+  return read_signal_done(VC_EVENT_ERROR, nh, vc);
+}
+
+static inline int
+write_signal_error(NetHandler *nh, UnixNetVConnection *vc, int lerrno)
+{
+  vc->lerrno = lerrno;
+  return write_signal_done(VC_EVENT_ERROR, nh, vc);
+}
+
+// Read the data for a UnixNetVConnection.
+// Rescheduling the UnixNetVConnection by moving the VC
+// onto or off of the ready_list.
+// Had to wrap this function with net_read_io for SSL.
+static void
+read_from_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
+{
+  NetState *s       = &vc->read;
+  ProxyMutex *mutex = thread->mutex.get();
+  int64_t r         = 0;
+
+  MUTEX_TRY_LOCK(lock, s->vio.mutex, thread);
+
+  if (!lock.is_locked()) {
+    read_reschedule(nh, vc);
+    return;
+  }
+
+  // It is possible that the closed flag got set from HttpSessionManager in the
+  // global session pool case.  If so, the closed flag should be stable once we get the
+  // s->vio.mutex (the global session pool mutex).
+  if (vc->closed) {
+    vc->nh->free_netevent(vc);
+    return;
+  }
+  // if it is not enabled.
+  if (!s->enabled || s->vio.op != VIO::READ || s->vio.is_disabled()) {
+    read_disable(nh, vc);
+    return;
+  }
+
+  MIOBufferAccessor &buf = s->vio.buffer;
+  ink_assert(buf.writer());
+
+  // if there is nothing to do, disable connection
+  int64_t ntodo = s->vio.ntodo();
+  if (ntodo <= 0) {
+    read_disable(nh, vc);
+    return;
+  }
+  int64_t toread = buf.writer()->write_avail();
+  if (toread > ntodo) {
+    toread = ntodo;
+  }
+
+  // read data
+  int64_t rattempted = 0, total_read = 0;
+  unsigned niov = 0;
+  IOVec tiovec[NET_MAX_IOV];
+  if (toread) {
+    IOBufferBlock *b = buf.writer()->first_write_block();
+    do {
+      niov       = 0;
+      rattempted = 0;
+      while (b && niov < NET_MAX_IOV) {
+        int64_t a = b->write_avail();
+        if (a > 0) {
+          tiovec[niov].iov_base = b->_end;
+          int64_t togo          = toread - total_read - rattempted;
+          if (a > togo) {
+            a = togo;
+          }
+          tiovec[niov].iov_len = a;
+          rattempted += a;
+          niov++;
+          if (a >= togo) {
+            break;
+          }
+        }
+        b = b->next.get();
+      }
+
+      ink_assert(niov > 0);
+      ink_assert(niov <= countof(tiovec));
+      struct msghdr msg;
+
+      ink_zero(msg);
+      msg.msg_name    = const_cast<sockaddr *>(vc->get_remote_addr());
+      msg.msg_namelen = ats_ip_size(vc->get_remote_addr());
+      msg.msg_iov     = &tiovec[0];
+      msg.msg_iovlen  = niov;
+      r               = SocketManager::recvmsg(vc->con.fd, &msg, 0);
+
+      NET_INCREMENT_DYN_STAT(net_calls_to_read_stat);
+
+      total_read += rattempted;
+    } while (rattempted && r == rattempted && total_read < toread);
+
+    // if we have already moved some bytes successfully, summarize in r
+    if (total_read != rattempted) {
+      if (r <= 0) {
+        r = total_read - rattempted;
+      } else {
+        r = total_read - rattempted + r;
+      }
+    }
+    // check for errors
+    if (r <= 0) {
+      if (r == -EAGAIN || r == -ENOTCONN) {
+        NET_INCREMENT_DYN_STAT(net_calls_to_read_nodata_stat);
+        vc->read.triggered = 0;
+        nh->read_ready_list.remove(vc);
+        return;
+      }
+
+      if (!r || r == -ECONNRESET) {
+        vc->read.triggered = 0;
+        nh->read_ready_list.remove(vc);
+        read_signal_done(VC_EVENT_EOS, nh, vc);
+        return;
+      }
+      vc->read.triggered = 0;
+      read_signal_error(nh, vc, static_cast<int>(-r));
+      return;
+    }
+    NET_SUM_DYN_STAT(net_read_bytes_stat, r);
+
+    // Add data to buffer and signal continuation.
+    buf.writer()->fill(r);
+#ifdef DEBUG
+    if (buf.writer()->write_avail() <= 0) {
+      Debug("iocore_net", "read_from_net, read buffer full");
+    }
+#endif
+    s->vio.ndone += r;
+    net_activity(vc, thread);
+  } else {
+    r = 0;
+  }
+
+  // Signal read ready, check if user is not done
+  if (r) {
+    // If there are no more bytes to read, signal read complete
+    ink_assert(ntodo >= 0);
+    if (s->vio.ntodo() <= 0) {
+      read_signal_done(VC_EVENT_READ_COMPLETE, nh, vc);
+      Debug("iocore_net", "read_from_net, read finished - signal done");
+      return;
+    } else {
+      if (read_signal_and_update(VC_EVENT_READ_READY, vc) != EVENT_CONT) {
+        return;
+      }
+
+      // change of lock... don't look at shared variables!
+      if (lock.get_mutex() != s->vio.mutex.get()) {
+        read_reschedule(nh, vc);
+        return;
+      }
+    }
+  }
+
+  // If here are is no more room, or nothing to do, disable the connection
+  if (s->vio.ntodo() <= 0 || !s->enabled || !buf.writer()->write_avail()) {
+    read_disable(nh, vc);
+    return;
+  }
+
+  read_reschedule(nh, vc);
+}
+
+//
+// Write the data for a UnixNetVConnection.
+// Rescheduling the UnixNetVConnection when necessary.
+//
+void
+write_to_net(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
+{
+  ProxyMutex *mutex = thread->mutex.get();
+
+  NET_INCREMENT_DYN_STAT(net_calls_to_writetonet_stat);
+  NET_INCREMENT_DYN_STAT(net_calls_to_writetonet_afterpoll_stat);
+
+  write_to_net_io(nh, vc, thread);
+}
+
+void
+write_to_net_io(NetHandler *nh, UnixNetVConnection *vc, EThread *thread)
+{
+  NetState *s       = &vc->write;
+  ProxyMutex *mutex = thread->mutex.get();
+
+  MUTEX_TRY_LOCK(lock, s->vio.mutex, thread);
+
+  if (!lock.is_locked() || lock.get_mutex() != s->vio.mutex.get()) {
+    write_reschedule(nh, vc);
+    return;
+  }
+
+  if (vc->has_error()) {
+    vc->lerrno = vc->error;
+    write_signal_and_update(VC_EVENT_ERROR, vc);
+    return;
+  }
+
+  // This function will always return true unless
+  // vc is an SSLNetVConnection.
+  if (!vc->getSSLHandShakeComplete()) {
+    if (vc->trackFirstHandshake()) {
+      // Eat the first write-ready.  Until the TLS handshake is complete,
+      // we should still be under the connect timeout and shouldn't bother
+      // the state machine until the TLS handshake is complete
+      vc->write.triggered = 0;
+      nh->write_ready_list.remove(vc);
+    }
+
+    int err, ret;
+
+    if (vc->get_context() == NET_VCONNECTION_OUT) {
+      ret = vc->sslStartHandShake(SSL_EVENT_CLIENT, err);
+    } else {
+      ret = vc->sslStartHandShake(SSL_EVENT_SERVER, err);
+    }
+
+    if (ret == EVENT_ERROR) {
+      vc->write.triggered = 0;
+      write_signal_error(nh, vc, err);
+    } else if (ret == SSL_HANDSHAKE_WANT_READ || ret == SSL_HANDSHAKE_WANT_ACCEPT) {
+      vc->read.triggered = 0;
+      nh->read_ready_list.remove(vc);
+      read_reschedule(nh, vc);
+    } else if (ret == SSL_HANDSHAKE_WANT_CONNECT || ret == SSL_HANDSHAKE_WANT_WRITE) {
+      vc->write.triggered = 0;
+      nh->write_ready_list.remove(vc);
+      write_reschedule(nh, vc);
+    } else if (ret == EVENT_DONE) {
+      vc->write.triggered = 1;
+      if (vc->write.enabled) {
+        nh->write_ready_list.in_or_enqueue(vc);
+      }
+    } else {
+      write_reschedule(nh, vc);
+    }
+
+    return;
+  }
+
+  // If it is not enabled,add to WaitList.
+  if (!s->enabled || s->vio.op != VIO::WRITE) {
+    write_disable(nh, vc);
+    return;
+  }
+
+  // If there is nothing to do, disable
+  int64_t ntodo = s->vio.ntodo();
+  if (ntodo <= 0) {
+    write_disable(nh, vc);
+    return;
+  }
+
+  MIOBufferAccessor &buf = s->vio.buffer;
+  ink_assert(buf.writer());
+
+  // Calculate the amount to write.
+  int64_t towrite = buf.reader()->read_avail();
+  if (towrite > ntodo) {
+    towrite = ntodo;
+  }
+
+  int signalled = 0;
+
+  // signal write ready to allow user to fill the buffer
+  if (towrite != ntodo && !buf.writer()->high_water()) {
+    if (write_signal_and_update(VC_EVENT_WRITE_READY, vc) != EVENT_CONT) {
+      return;
+    }
+
+    ntodo = s->vio.ntodo();
+    if (ntodo <= 0) {
+      write_disable(nh, vc);
+      return;
+    }
+
+    signalled = 1;
+
+    // Recalculate amount to write
+    towrite = buf.reader()->read_avail();
+    if (towrite > ntodo) {
+      towrite = ntodo;
+    }
+  }
+
+  // if there is nothing to do, disable
+  ink_assert(towrite >= 0);
+  if (towrite <= 0) {
+    write_disable(nh, vc);
+    return;
+  }
+
+  int needs             = 0;
+  int64_t total_written = 0;
+  int64_t r             = vc->load_buffer_and_write(towrite, buf, total_written, needs);
+
+  if (total_written > 0) {
+    NET_SUM_DYN_STAT(net_write_bytes_stat, total_written);
+    s->vio.ndone += total_written;
+    net_activity(vc, thread);
+  }
+
+  // A write of 0 makes no sense since we tried to write more than 0.
+  ink_assert(r != 0);
+  // Either we wrote something or got an error.
+  // check for errors
+  if (r < 0) { // if the socket was not ready, add to WaitList
+    if (r == -EAGAIN || r == -ENOTCONN || -r == EINPROGRESS) {
+      NET_INCREMENT_DYN_STAT(net_calls_to_write_nodata_stat);
+      if ((needs & EVENTIO_WRITE) == EVENTIO_WRITE) {
+        vc->write.triggered = 0;
+        nh->write_ready_list.remove(vc);
+        write_reschedule(nh, vc);
+      }
+
+      if ((needs & EVENTIO_READ) == EVENTIO_READ) {
+        vc->read.triggered = 0;
+        nh->read_ready_list.remove(vc);
+        read_reschedule(nh, vc);
+      }
+
+      return;
+    }
+
+    vc->write.triggered = 0;
+    write_signal_error(nh, vc, static_cast<int>(-r));
+    return;
+  } else {                                        // Wrote data.  Finished without error
+    int wbe_event = vc->write_buffer_empty_event; // save so we can clear if needed.
+
+    // If the empty write buffer trap is set, clear it.
+    if (!(buf.reader()->is_read_avail_more_than(0))) {
+      vc->write_buffer_empty_event = 0;
+    }
+
+    // If there are no more bytes to write, signal write complete,
+    ink_assert(ntodo >= 0);
+    if (s->vio.ntodo() <= 0) {
+      write_signal_done(VC_EVENT_WRITE_COMPLETE, nh, vc);
+      return;
+    }
+
+    int e = 0;
+    if (!signalled || (s->vio.ntodo() > 0 && !buf.writer()->high_water())) {
+      e = VC_EVENT_WRITE_READY;
+    } else if (wbe_event != vc->write_buffer_empty_event) {
+      // @a signalled means we won't send an event, and the event values differing means we
+      // had a write buffer trap and cleared it, so we need to send it now.
+      e = wbe_event;
+    }
+
+    if (e) {
+      if (write_signal_and_update(e, vc) != EVENT_CONT) {
+        return;
+      }
+
+      // change of lock... don't look at shared variables!
+      if (lock.get_mutex() != s->vio.mutex.get()) {
+        write_reschedule(nh, vc);
+        return;
+      }
+    }
+
+    if ((needs & EVENTIO_READ) == EVENTIO_READ) {
+      read_reschedule(nh, vc);
+    }
+
+    if (!(buf.reader()->is_read_avail_more_than(0))) {
+      write_disable(nh, vc);
+      return;
+    }
+
+    if ((needs & EVENTIO_WRITE) == EVENTIO_WRITE) {
+      write_reschedule(nh, vc);
+    }
+
+    return;
+  }
+}
+#endif

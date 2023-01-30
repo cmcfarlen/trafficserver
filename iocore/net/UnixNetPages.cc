@@ -52,6 +52,7 @@ struct ShowNet : public ShowCont {
   int
   showConnectionsOnThread(int event, Event *e)
   {
+#ifdef FIX_SHOW_STUFF
     EThread *ethread = e->ethread;
     NetHandler *nh   = get_NetHandler(ethread);
     MUTEX_TRY_LOCK(lock, nh->mutex, ethread);
@@ -111,6 +112,7 @@ struct ShowNet : public ShowCont {
       CHECK_SHOW(show("</table>\n"));
       return complete(event, e);
     }
+#endif
     return EVENT_CONT;
   }
 
@@ -147,6 +149,7 @@ struct ShowNet : public ShowCont {
   int
   showSingleThread(int event, Event *e)
   {
+#ifdef FIX_SHOW_STUFF
     EThread *ethread               = e->ethread;
     NetHandler *nh                 = get_NetHandler(ethread);
     PollDescriptor *pollDescriptor = get_PollDescriptor(ethread);
@@ -178,6 +181,7 @@ struct ShowNet : public ShowCont {
     } else {
       return complete(event, e);
     }
+#endif
     return EVENT_CONT;
   }
 
