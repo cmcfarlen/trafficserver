@@ -127,10 +127,11 @@ test_EventIOStrategy_CPPFLAGS = \
 
 test_EventIOStrategy_LDFLAGS = \
 	$(top_builddir)/src/tscore/libtscore.la \
-	$(top_builddir)/iocore/eventsystem/libinkevent.a \
 	$(top_builddir)/iocore/io_uring/libinkuring.a \
 	$(top_builddir)/src/records/librecords_p.a \
 	$(top_builddir)/mgmt/libmgmt_p.la \
+	$(top_builddir)/iocore/eventsystem/libinkevent.a \
+	$(top_builddir)/src/records/librecords_p.a \
 	@AM_LDFLAGS@ \
 	@OPENSSL_LDFLAGS@ \
 	@YAMLCPP_LDFLAGS@
