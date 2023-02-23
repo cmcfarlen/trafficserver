@@ -88,7 +88,7 @@ struct PPv2Hdr {
     struct {
       uint8_t src_addr[108];
       uint8_t dst_addr[108];
-    } unix;
+    } unix1;
   } addr;
 };
 

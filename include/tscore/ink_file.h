@@ -46,9 +46,11 @@
 #endif
 
 // Darwin keeps statfs(2) in <sys/mount.h> ...
-#if HAVE_SYS_MOUNT_H
+#if HAVE_SYS_MOUNT_H && !defined(_LINUX_MOUNT_H)
 #include <sys/mount.h>
 #endif
+
+#include <linux/mount.h>
 
 /*===========================================================================*
 

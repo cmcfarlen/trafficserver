@@ -263,6 +263,7 @@ debug_certificate_name(const char *msg, X509_NAME *name)
   BIO_free(bio);
 }
 
+#ifdef MOVE_TO_STRATEGY
 int
 SSLNetVConnection::_ssl_read_from_net(EThread *lthread, int64_t &ret)
 {
@@ -377,6 +378,7 @@ SSLNetVConnection::_ssl_read_from_net(EThread *lthread, int64_t &ret)
   }
   return event;
 }
+#endif
 
 /** Read from socket directly for handshake data.  Store the data in an MIOBuffer.  Place the data in
  * the read BIO so the openssl library has access to it. If for some reason we must abort out of the
@@ -535,7 +537,10 @@ SSLNetVConnection::update_rbio(bool move_to_socket)
   return retval;
 }
 
+SSLNetVConnection::SSLNetVConnection() {}
+
 // changed by YTS Team, yamsat
+#ifdef MOVE_TO_STRATEGY
 void
 SSLNetVConnection::net_read_io(NetHandler *nh, EThread *lthread)
 {
@@ -899,7 +904,6 @@ SSLNetVConnection::load_buffer_and_write(int64_t towrite, MIOBufferAccessor &buf
   return num_really_written;
 }
 
-SSLNetVConnection::SSLNetVConnection() {}
 
 void
 SSLNetVConnection::do_io_close(int lerrno)
@@ -950,6 +954,7 @@ SSLNetVConnection::do_io_close(int lerrno)
   // Go on and do the unix socket cleanups
   super::do_io_close(lerrno);
 }
+#endif
 
 void
 SSLNetVConnection::clear()

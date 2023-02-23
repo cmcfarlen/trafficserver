@@ -16,8 +16,7 @@
 #######################
 
 
-add_library(inkevent)
-target_sources(inkevent PRIVATE
+add_library(inkevent SHARED
         EventSystem.cc
         IOBuffer.cc
         Inline.cc

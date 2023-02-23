@@ -17,50 +17,51 @@
 
 
 add_library(inknet STATIC
-        ALPNSupport.cc
-        BIO_fastopen.cc
-        BoringSSLUtils.cc
-        Connection.cc
-        Inline.cc
-        YamlSNIConfig.cc
-        Net.cc
-        NetVConnection.cc
-        ProxyProtocol.cc
-        Socks.cc
-        SSLCertLookup.cc
-        SSLClientCoordinator.cc
-        SSLClientUtils.cc
-        SSLConfig.cc
-        SSLSecret.cc
-        SSLDiags.cc
-        SSLInternal.cc
-        SSLNetAccept.cc
-        SSLNetProcessor.cc
-        SSLNetVConnection.cc
-        SSLNextProtocolAccept.cc
-        SSLNextProtocolSet.cc
-        SSLSNIConfig.cc
-        SSLStats.cc
-        SSLSessionCache.cc
-        SSLSessionTicket.cc
-        SSLUtils.cc
-        OCSPStapling.cc
-        TLSBasicSupport.cc
-        TLSEarlyDataSupport.cc
-        TLSKeyLogger.cc
-        TLSSessionResumptionSupport.cc
-        TLSSNISupport.cc
-        TLSTunnelSupport.cc
-        UDPIOEvent.cc
-        UnixConnection.cc
-        UnixNet.cc
-        UnixNetAccept.cc
-        UnixNetPages.cc
-        UnixNetProcessor.cc
-        UnixNetVConnection.cc
-        UnixUDPConnection.cc
-        UnixUDPNet.cc
-        SSLDynlock.cc
+        EventIOStrategy.cc
+        # ALPNSupport.cc
+        # BIO_fastopen.cc
+        # BoringSSLUtils.cc
+        # Connection.cc
+        # Inline.cc
+        # YamlSNIConfig.cc
+        # Net.cc
+        # NetVConnection.cc
+        # ProxyProtocol.cc
+        # Socks.cc
+        # SSLCertLookup.cc
+        # SSLClientCoordinator.cc
+        # SSLClientUtils.cc
+        # SSLConfig.cc
+        # SSLSecret.cc
+        # SSLDiags.cc
+        # SSLInternal.cc
+        # SSLNetAccept.cc
+        # SSLNetProcessor.cc
+        # SSLNetVConnection.cc
+        # SSLNextProtocolAccept.cc
+        # SSLNextProtocolSet.cc
+        # SSLSNIConfig.cc
+        # SSLStats.cc
+        # SSLSessionCache.cc
+        # SSLSessionTicket.cc
+        # SSLUtils.cc
+        # OCSPStapling.cc
+        # TLSBasicSupport.cc
+        # TLSEarlyDataSupport.cc
+        # TLSKeyLogger.cc
+        # TLSSessionResumptionSupport.cc
+        # TLSSNISupport.cc
+        # TLSTunnelSupport.cc
+        # UDPIOEvent.cc
+        # UnixConnection.cc
+        # UnixNet.cc
+        # UnixNetAccept.cc
+        # UnixNetPages.cc
+        # UnixNetProcessor.cc
+        # UnixNetVConnection.cc
+        # UnixUDPConnection.cc
+        # UnixUDPNet.cc
+        # SSLDynlock.cc
 )
 target_link_libraries(inknet inkevent records_p)
 target_include_directories(inknet PRIVATE
@@ -78,4 +79,13 @@ target_include_directories(inknet PRIVATE
         ${CMAKE_SOURCE_DIR}/mgmt/utils
         ${OPENSSL_INCLUDE_DIRS}
         ${YAML_INCLUDE_DIRS}
+)
+
+add_executable(test_net unit_tests/test_EventIOStrategy.cc)
+target_link_libraries(test_net inkevent records_p inknet inkevent tscore yaml-cpp libswoc)
+target_include_directories(test_net PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/iocore/net
+        ${CMAKE_SOURCE_DIR}/iocore/eventsystem
+        ${CATCH_INCLUDE_DIR}
 )

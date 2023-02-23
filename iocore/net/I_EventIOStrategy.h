@@ -57,6 +57,8 @@ public:
   void signalActivity() override;
   void init_for_thread(EThread *thread) override;
 
+  int make_listen_socket(sockaddr const* bind_addr, int bind_port);
+
 #ifdef MOVE_TO_PRIVATE
   /**
     Start to handle read & write event on a NetEvent.

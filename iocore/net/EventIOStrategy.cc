@@ -28,6 +28,10 @@ A brief file description
 #include "I_EventIOStrategy.h"
 #include "P_Net.h"
 
+#if HAVE_EVENTFD
+#include <sys/eventfd.h>
+#endif
+
 #if TS_USE_LINUX_IO_URING
 #include "I_IO_URING.h"
 //#include "P_UnixNet.h"
@@ -282,7 +286,8 @@ EventIOStrategy::net_signal_hook_callback()
   /* Nothing to drain or do */
 #else
   char dummy[1024];
-  ATS_UNUSED_RETURN(read(thread->evpipe[0], &dummy[0], 1024));
+  auto* thread = this_ethread();
+  //ATS_UNUSED_RETURN(read(thread->evpipe[0], &dummy[0], 1024));
 #endif
 }
 
@@ -386,7 +391,7 @@ EventIOStrategy::signalActivity()
   ATS_UNUSED_RETURN(port_send(pd->port_fd, 0, thread->ep));
 #else
   char dummy = 1;
-  ATS_UNUSED_RETURN(write(thread->evpipe[1], &dummy, 1));
+  // TODO ATS_UNUSED_RETURN(write(thread->evpipe[1], &dummy, 1));
 #endif
 }
 

@@ -15,20 +15,20 @@
 #
 #######################
 
+add_library(inkuring STATIC
+        io_uring.cc
+)
+include_directories(
+        ${CMAKE_SOURCE_DIR}/iocore/eventsystem
+        ${CMAKE_SOURCE_DIR}/iocore/dns
+        ${CMAKE_SOURCE_DIR}/iocore/aio
+        ${CMAKE_SOURCE_DIR}/iocore/io_uring
+        ${CMAKE_SOURCE_DIR}/iocore/net
+        ${CMAKE_SOURCE_DIR}/iocore/cache
+        ${CMAKE_SOURCE_DIR}/iocore/hostdb
+)
 
-add_library(tscpputil SHARED
-        TextView.cc
-        YamlCfg.cc
-        )
-#target_link_libraries(tscpputil PRIVATE yaml-cpp libswoc)
-
-add_executable(test_tscpputil
-        unit_tests/test_LocalBuffer.cc
-        unit_tests/test_PostScript.cc
-        unit_tests/test_TextView.cc
-        unit_tests/test_Strerror.cc
-        unit_tests/test_ts_meta.cc
-        unit_tests/unit_test_main.cc
-        )
-target_link_libraries(test_tscpputil PRIVATE tscpputil libswoc yaml-cpp)
-target_include_directories(test_tscpputil PRIVATE ${CMAKE_SOURCE_DIR}/include ${CATCH_INCLUDE_DIR})
+add_executable(test_iouring
+        unit_tests/test_diskIO.cc)
+target_link_libraries(test_iouring PRIVATE tscore inkuring tscpputil libswoc uring)
+target_include_directories(test_iouring PRIVATE ${CMAKE_SOURCE_DIR}/include ${CATCH_INCLUDE_DIR})

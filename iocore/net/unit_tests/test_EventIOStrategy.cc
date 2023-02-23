@@ -25,9 +25,17 @@ HTTP state machine
 #define CATCH_CONFIG_MAIN
 #include "catch.hpp"
 
+#include "I_SocketManager.h"
 #include "I_EventIOStrategy.h"
+#include "swoc/IPEndpoint.h"
 
 TEST_CASE("EventIOStrategy", "iostrategy")
 {
-  REQUIRE(1 == 0);
+  Ptr<ProxyMutex> m{new_ProxyMutex()};
+  EventIOStrategy ios{m, {}};
+
+  swoc::IPEndpoint bind_addr { "127.0.0.1:8000" };
+
+  REQUIRE(bind_addr.host_order_port() == 8000);
+
 }

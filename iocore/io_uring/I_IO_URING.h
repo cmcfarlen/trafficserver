@@ -26,6 +26,8 @@ Linux io_uring helper library
 #include <liburing.h>
 #include <utility>
 
+#include "tscore/ink_hrtime.h"
+
 struct IOUringConfig {
   int queue_entries = 1024;
   int sq_poll_ms    = 0;

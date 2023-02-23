@@ -28,6 +28,9 @@ Linux io_uring helper library
 
 #include "I_IO_URING.h"
 #include "tscore/ink_hrtime.h"
+#include "tscore/Diags.h"
+
+#define TAG "io_uring"
 
 std::atomic<int> main_wq_fd;
 std::atomic<uint64_t> io_uring_submissions = 0;

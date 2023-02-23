@@ -16,7 +16,7 @@
 #######################
 
 
-add_library(records_lm STATIC
+add_library(records_lm SHARED
         P_RecCore.cc
         RecConfigParse.cc
         RecCore.cc

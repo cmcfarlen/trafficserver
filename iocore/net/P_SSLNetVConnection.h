@@ -110,7 +110,7 @@ class SSLNetVConnection : public UnixNetVConnection,
 public:
   int sslStartHandShake(int event, int &err) override;
   void clear() override;
-  void free(EThread *t) override;
+  void free(EThread *t);
 
   bool
   trackFirstHandshake() override
@@ -136,9 +136,6 @@ public:
 
   int sslServerHandShakeEvent(int &err);
   int sslClientHandShakeEvent(int &err);
-  void net_read_io(NetHandler *nh, EThread *lthread) override;
-  int64_t load_buffer_and_write(int64_t towrite, MIOBufferAccessor &buf, int64_t &total_written, int &needs) override;
-  void do_io_close(int lerrno = -1) override;
 
   ////////////////////////////////////////////////////////////
   // Instances of NetVConnection should be allocated        //
@@ -467,7 +464,7 @@ private:
   void _bindSSLObject();
   void _unbindSSLObject();
 
-  int _ssl_read_from_net(EThread *lthread, int64_t &ret);
+  // int _ssl_read_from_net(EThread *lthread, int64_t &ret);
   ssl_error_t _ssl_read_buffer(void *buf, int64_t nbytes, int64_t &nread);
   ssl_error_t _ssl_write_buffer(const void *buf, int64_t nbytes, int64_t &nwritten);
   ssl_error_t _ssl_connect();
