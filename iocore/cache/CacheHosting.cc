@@ -44,15 +44,12 @@ DbgCtl dbg_ctl_matcher{"matcher"};
  *   Begin class HostMatcher
  *************************************************************/
 
-CacheHostMatcher::CacheHostMatcher(const char *name, CacheType typ) : data_array(nullptr), array_len(-1), num_el(-1), type(typ)
+CacheHostMatcher::CacheHostMatcher(const char *name, CacheType typ) : host_lookup(name), num_el(-1), type(typ)
 {
-  host_lookup = new HostLookup(name);
 }
 
 CacheHostMatcher::~CacheHostMatcher()
 {
-  delete host_lookup;
-  delete[] data_array;
 }
 
 //
@@ -65,7 +62,7 @@ void
 CacheHostMatcher::Print() const
 {
   printf("\tHost/Domain Matcher with %d elements\n", num_el);
-  host_lookup->Print(PrintFunc);
+  host_lookup.Print(PrintFunc);
 }
 
 //
@@ -89,13 +86,12 @@ void
 CacheHostMatcher::AllocateSpace(int num_entries)
 {
   // Should not have been allocated before
-  ink_assert(array_len == -1);
+  ink_assert(data_array.size() == 0);
 
-  host_lookup->AllocateSpace(num_entries);
+  host_lookup.AllocateSpace(num_entries);
 
-  data_array = new CacheHostRecord[num_entries];
+  data_array.resize(num_entries);
 
-  array_len = num_entries;
   num_el    = 0;
 }
 
@@ -124,14 +120,14 @@ CacheHostMatcher::Match(const char *rdata, int rlen, CacheHostResult *result) co
   std::string_view data{rdata, static_cast<size_t>(rlen)};
   HostLookupState s;
 
-  r = host_lookup->MatchFirst(data, &s, &opaque_ptr);
+  r = host_lookup.MatchFirst(data, &s, &opaque_ptr);
 
   while (r == true) {
     ink_assert(opaque_ptr != nullptr);
     data_ptr = static_cast<CacheHostRecord *>(opaque_ptr);
     data_ptr->UpdateMatch(result);
 
-    r = host_lookup->MatchNext(&s, &opaque_ptr);
+    r = host_lookup.MatchNext(&s, &opaque_ptr);
   }
 }
 
@@ -151,10 +147,10 @@ CacheHostMatcher::NewEntry(matcher_line *line_info)
 
   // Make sure space has been allocated
   ink_assert(num_el >= 0);
-  ink_assert(array_len >= 0);
+  ink_assert(data_array.size() > 0);
 
   // Make sure we do not overrun the array;
-  ink_assert(num_el < array_len);
+  ink_assert(num_el < data_array.size());
 
   match_data = line_info->line[1][line_info->dest_entry];
 
@@ -169,7 +165,7 @@ CacheHostMatcher::NewEntry(matcher_line *line_info)
   line_info->num_el--;
 
   // Fill in the parameter info
-  cur_d = data_array + num_el;
+  cur_d = data_array.data() + num_el;
   errNo = cur_d->Init(line_info, type);
 
   if (errNo) {
@@ -179,7 +175,7 @@ CacheHostMatcher::NewEntry(matcher_line *line_info)
   }
   Dbg(dbg_ctl_cache_hosting, "hostname: %s, host record: %p", match_data, cur_d);
   // Fill in the matching info
-  host_lookup->NewEntry(match_data, (line_info->type == MATCH_DOMAIN) ? true : false, cur_d);
+  host_lookup.NewEntry(match_data, line_info->type == MATCH_DOMAIN, cur_d);
 
   num_el++;
   return;
@@ -396,6 +392,15 @@ CacheHostTable::BuildTableFromString(const char *config_file_path, char *file_bu
     Print();
   }
   return numEntries;
+}
+
+void
+CacheHostTable::Rebuild()
+{
+  build_vol_hash_table(&gen_host_rec);
+  for (auto& h_rec: hostMatch->getData()) {
+    build_vol_hash_table(&h_rec);
+  }
 }
 
 int

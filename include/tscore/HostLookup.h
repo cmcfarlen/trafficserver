@@ -109,7 +109,7 @@ struct HostBranch {
 //
 
 struct HostLookupState {
-  HostBranch *cur{nullptr};
+  const HostBranch *cur{nullptr};
   int table_level{0};
   int array_index{0};
   std::string_view hostname;      ///< Original host name.
@@ -125,10 +125,8 @@ public:
   HostLookup(std::string_view name);
   void NewEntry(std::string_view match_data, bool domain_record, void *opaque_data_in);
   void AllocateSpace(int num_entries);
-  bool Match(std::string_view host);
-  bool Match(std::string_view host, void **opaque_ptr);
-  bool MatchFirst(std::string_view host, HostLookupState *s, void **opaque_ptr);
-  bool MatchNext(HostLookupState *s, void **opaque_ptr);
+  bool MatchFirst(std::string_view host, HostLookupState *s, void **opaque_ptr) const;
+  bool MatchNext(HostLookupState *s, void **opaque_ptr) const;
 
   void Print(PrintFunc const &f) const;
   void Print() const;
@@ -146,8 +144,8 @@ private:
   void TableInsert(std::string_view match_data, int index, bool domain_record);
   HostBranch *TableNewLevel(HostBranch *from, std::string_view level_data);
   HostBranch *InsertBranch(HostBranch *insert_in, std::string_view level_data);
-  HostBranch *FindNextLevel(HostBranch *from, std::string_view level_data, bool bNotProcess = false);
-  bool MatchArray(HostLookupState *s, void **opaque_ptr, LeafIndices &array, bool host_done);
+  HostBranch *FindNextLevel(const HostBranch *from, std::string_view level_data, bool bNotProcess = false) const;
+  bool MatchArray(HostLookupState *s, void **opaque_ptr, const LeafIndices &array, bool host_done) const;
 
   void PrintHostBranch(const HostBranch *hb, PrintFunc const &f) const;
 

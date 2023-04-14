@@ -3015,16 +3015,7 @@ void
 rebuild_host_table(Cache *cache)
 {
   ReplaceablePtr<CacheHostTable>::ScopedWriter hosttable(&cache->hosttable);
-  build_vol_hash_table(&hosttable->gen_host_rec);
-  if (hosttable->m_numEntries != 0) {
-    CacheHostMatcher *hm   = hosttable->getHostMatcher();
-    CacheHostRecord *h_rec = hm->getDataArray();
-    int h_rec_len          = hm->getNumElements();
-    int i;
-    for (i = 0; i < h_rec_len; i++) {
-      build_vol_hash_table(&h_rec[i]);
-    }
-  }
+  hosttable->Rebuild();
 }
 
 // if generic_host_rec.vols == nullptr, what do we do???

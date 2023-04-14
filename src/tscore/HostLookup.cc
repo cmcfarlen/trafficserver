@@ -722,7 +722,7 @@ HostLookup::InsertBranch(HostBranch *insert_in, string_view level_data)
 //    otherwise returns nullptr
 //
 HostBranch *
-HostLookup::FindNextLevel(HostBranch *from, string_view level_data, bool bNotProcess)
+HostLookup::FindNextLevel(const HostBranch *from, string_view level_data, bool bNotProcess) const
 {
   HostBranch *r = nullptr;
 
@@ -795,7 +795,7 @@ HostLookup::TableInsert(string_view match_data, int index, bool domain_record)
   //         was not matched by traversin the search structure since
   //         it had too elements.  A comparison must be done at the
   //         leaf node to make sure we have a match
-  if (domain_record == false) {
+  if (!domain_record) {
     if (match.empty()) {
       leaf_array[index].type = HostLeaf::HOST_COMPLETE;
     } else {
@@ -825,7 +825,7 @@ HostLookup::TableInsert(string_view match_data, int index, bool domain_record)
 //
 
 bool
-HostLookup::MatchArray(HostLookupState *s, void **opaque_ptr, LeafIndices &array, bool host_done)
+HostLookup::MatchArray(HostLookupState *s, void **opaque_ptr, const LeafIndices &array, bool host_done) const
 {
   size_t i;
 
@@ -845,14 +845,14 @@ HostLookup::MatchArray(HostLookupState *s, void **opaque_ptr, LeafIndices &array
       //   so that we do not match a rule for "example.com" to
       //   "www.example.com
       //
-      if (host_done == true) {
+      if (host_done) {
         *opaque_ptr    = leaf.opaque_data;
         s->array_index = i;
         return true;
       }
       break;
     case HostLeaf::DOMAIN_PARTIAL:
-      if (domaincmp(s->hostname, leaf.match) == false) {
+      if (!domaincmp(s->hostname, leaf.match)) {
         break;
       }
     // FALL THROUGH
@@ -875,7 +875,7 @@ HostLookup::MatchArray(HostLookupState *s, void **opaque_ptr, LeafIndices &array
 //
 //
 bool
-HostLookup::MatchFirst(string_view host, HostLookupState *s, void **opaque_ptr)
+HostLookup::MatchFirst(string_view host, HostLookupState *s, void **opaque_ptr) const
 {
   s->cur           = &root;
   s->table_level   = 0;
@@ -892,9 +892,9 @@ HostLookup::MatchFirst(string_view host, HostLookupState *s, void **opaque_ptr)
 //    arg hostname
 //
 bool
-HostLookup::MatchNext(HostLookupState *s, void **opaque_ptr)
+HostLookup::MatchNext(HostLookupState *s, void **opaque_ptr) const
 {
-  HostBranch *cur = s->cur;
+  const HostBranch *cur = s->cur;
 
   // Check to see if there is any work to be done
   if (leaf_array.size() <= 0) {

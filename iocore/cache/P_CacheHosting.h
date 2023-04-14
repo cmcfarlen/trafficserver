@@ -73,6 +73,8 @@ struct CacheHostResult {
 class CacheHostMatcher
 {
 public:
+  using CacheHostRecordArray = std::vector<CacheHostRecord>;
+
   CacheHostMatcher(const char *name, CacheType typ);
   ~CacheHostMatcher();
 
@@ -87,22 +89,23 @@ public:
   {
     return num_el;
   }
-  CacheHostRecord *
+  const CacheHostRecord *
   getDataArray() const
   {
-    return data_array;
+    return data_array.data();
   }
-  HostLookup *
-  getHLookup() const
+  CacheHostRecord *
+  getDataArray()
   {
-    return host_lookup;
+    return data_array.data();
   }
+
+  CacheHostRecordArray& getData() { return data_array; }
 
 private:
   static void PrintFunc(void *opaque_data);
-  HostLookup *host_lookup;     // Data structure to do the lookups
-  CacheHostRecord *data_array; // array of all data items
-  int array_len;               // the length of the arrays
+  HostLookup host_lookup;     // Data structure to do the lookups
+  CacheHostRecordArray data_array; // array of all data items
   int num_el;                  // the number of items in the tree
   CacheType type;
 };
@@ -224,9 +227,11 @@ public:
 
   int BuildTable(const char *config_file_path);
   int BuildTableFromString(const char *config_file_path, char *str);
+  void Rebuild();
 
   void Match(const char *rdata, int rlen, CacheHostResult *result) const;
   void Print() const;
+
 
   int
   getEntryCount() const
