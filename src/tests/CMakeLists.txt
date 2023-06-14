@@ -82,7 +82,7 @@ macro(add_stubbed_test name)
     add_executable(${name}
             ${CMAKE_SOURCE_DIR}/iocore/cache/test/stub.cc
             ${ARGN})
-    add_test(NAME test_stubbed_${name} COMMAND $<TARGET_FILE:${name}>)
+    add_test(NAME test_stubbed_${name} COMMAND $<TARGET_FILE:${name}> WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/iocore/net/unit_tests)
 endmacro()
 
 add_cache_test(Cache ${CMAKE_SOURCE_DIR}/iocore/cache/test/test_Cache.cc)

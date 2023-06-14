@@ -4461,6 +4461,7 @@ HttpSM::check_sni_host()
           if (!sni_value || sni_value[0] == '\0') { // No SNI
             Warning("No SNI for TLS request with hostname %.*s action=%s", host_len, host_name, action_value);
             SMDebug("ssl_sni", "No SNI for TLS request with hostname %.*s action=%s", host_len, host_name, action_value);
+            SMDebug("http", "done parsing client request header %.*s %.*s", host_len, host, path_len, path);
             if (host_sni_policy == 2) {
               ts::bwprint(error_bw_buffer, "No SNI for TLS request: connecting to {} for host='{}', returning a 403",
                           t_state.client_info.dst_addr, std::string_view{host_name, static_cast<size_t>(host_len)});

@@ -55,6 +55,7 @@ benchmark_LogObject_LDADD = \
 #include "DiagsConfig.h"
 #include "records/I_RecLocal.h"
 #include "tscore/I_Layout.h"
+#include "I_Machine.h"
 
 #include <thread>
 #include <condition_variable>
@@ -86,10 +87,50 @@ struct barrier {
 };
 } // namespace notstd
 
+std::atomic<uint64_t> cas_misses(0);
+void
+test_logs(LogObject *logo, int thread_cnt)
+{
+  notstd::barrier barrier(thread_cnt);
+  auto test_object = [&](LogObject *o) {
+    EThread *me = new EThread;
+    me->set_specific();
+    me->set_event_type(ET_CALL);
+    barrier.arrive_and_wait();
+
+    std::string_view logline = "012345678901234567890123456789012345678901234567890";
+    int total                = 0;
+    while (total < Log::config->log_buffer_size * 100) {
+      auto rc = o->log(nullptr, logline);
+      if (rc != Log::LOG_OK) {
+        throw std::runtime_error("Log failed");
+      }
+      total += logline.size();
+    }
+
+    cas_misses.fetch_add(o->get_local_cas_misses());
+    o->reset_cas_misses();
+  };
+
+  REQUIRE(logo->writes_to_disk());
+  REQUIRE(!logo->writes_to_pipe());
+
+  std::vector<std::thread> threads;
+  threads.reserve(thread_cnt);
+
+  for (int i = 0; i < thread_cnt; ++i) {
+    threads.emplace_back(test_object, logo);
+  }
+  for (int i = 0; i < thread_cnt; ++i) {
+    threads[i].join();
+  }
+}
+
 TEST_CASE("LogObject", "[proxy/logging]")
 {
   ink_freelist_init_ops(true, true);
   init_buffer_allocators(0);
+  Machine::init("benchmark_LogObject");
 
   Thread *main_thread = new EThread;
   main_thread->set_specific();
@@ -110,8 +151,6 @@ TEST_CASE("LogObject", "[proxy/logging]")
   REC_ReadConfigInteger(stacksize, "proxy.config.thread.default.stacksize");
   eventProcessor.start(10, stacksize);
 
-  pmgmt = new ProcessManager(false);
-
   Log::init(Log::NO_REMOTE_MANAGEMENT);
 
   LogFormat *fmt = MakeTextLogFormat();
@@ -121,74 +160,89 @@ TEST_CASE("LogObject", "[proxy/logging]")
   Log::config->format_list.add(fmt, false);
   Log::config->display(stdout);
 
-  LogObject *slowo = new LogObject(Log::config, fmt, "/tmp", "atsbenchlogslow.txt", LOG_FILE_ASCII, "testheader", Log::NO_ROLLING,
-                                   1, 100, 100, 10, false, 0, 0, false, 0);
-  LogObject *fasto = new LogObject(Log::config, fmt, "/tmp", "atsbenchlogfast.txt", LOG_FILE_ASCII, "testheader", Log::NO_ROLLING,
-                                   1, 100, 100, 10, false, 0, 0, false, 0, true);
+  LogObject *slowo = new LogObject(Log::config, fmt, Log::config->logfile_dir, "atsbenchlogslow.txt", LOG_FILE_ASCII, "testheader",
+                                   Log::NO_ROLLING, 1, 100, 100, 10, false, 0, 0, true, 0);
+  LogObject *fasto = new LogObject(Log::config, fmt, Log::config->logfile_dir, "atsbenchlogfast.txt", LOG_FILE_ASCII, "testheader",
+                                   Log::NO_ROLLING, 1, 100, 100, 10, false, 0, 0, true, 0, true);
 
   Log::config->log_object_manager.manage_object(slowo);
   Log::config->log_object_manager.manage_object(fasto);
 
-  BENCHMARK("logobject fast")
+  BENCHMARK("fast 1")
   {
-    int thread_cnt = 40;
-    notstd::barrier barrier(thread_cnt);
-    auto test_object = [&](LogObject *o) {
-      Thread *me = new EThread;
-      me->set_specific();
-      barrier.arrive_and_wait();
-
-      std::string_view logline = "012345678901234567890123456789012345678901234567890";
-      int total                = 0;
-      while (total < Log::config->log_buffer_size * 100) {
-        o->log(nullptr, logline);
-        total += logline.size();
-      }
-    };
-
-    REQUIRE(fasto->writes_to_disk());
-    REQUIRE(!fasto->writes_to_pipe());
-
-    std::vector<std::thread> threads;
-    threads.reserve(thread_cnt);
-
-    for (int i = 0; i < thread_cnt; ++i) {
-      threads.emplace_back(test_object, fasto);
-    }
-    for (int i = 0; i < thread_cnt; ++i) {
-      threads[i].join();
-    }
+    test_logs(fasto, 1);
+  };
+  BENCHMARK("slow 1")
+  {
+    test_logs(slowo, 1);
   };
 
-  BENCHMARK("logobject slow")
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
+
+  BENCHMARK("fast 2")
   {
-    int thread_cnt = 40;
-    notstd::barrier barrier(thread_cnt);
-
-    auto test_object = [&](LogObject *o) {
-      Thread *me = new EThread;
-      me->set_specific();
-      barrier.arrive_and_wait();
-
-      std::string_view logline = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvw";
-      int total                = 0;
-      while (total < Log::config->log_buffer_size * 100) {
-        o->log(nullptr, logline);
-        total += logline.size();
-      }
-    };
-
-    REQUIRE(slowo->writes_to_disk());
-    REQUIRE(!slowo->writes_to_pipe());
-
-    std::vector<std::thread> threads;
-    threads.reserve(thread_cnt);
-
-    for (int i = 0; i < thread_cnt; ++i) {
-      threads.emplace_back(test_object, slowo);
-    }
-    for (int i = 0; i < thread_cnt; ++i) {
-      threads[i].join();
-    }
+    test_logs(fasto, 2);
   };
+  BENCHMARK("slow 2")
+  {
+    test_logs(slowo, 2);
+  };
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
+
+  BENCHMARK("fast 4")
+  {
+    test_logs(fasto, 4);
+  };
+  BENCHMARK("slow 4")
+  {
+    test_logs(slowo, 4);
+  };
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
+
+  BENCHMARK("fast 8")
+  {
+    test_logs(fasto, 8);
+  };
+  BENCHMARK("slow 8")
+  {
+    test_logs(slowo, 8);
+  };
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
+
+  BENCHMARK("fast 16")
+  {
+    test_logs(fasto, 16);
+  };
+  BENCHMARK("slow 16")
+  {
+    test_logs(slowo, 16);
+  };
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
+
+  BENCHMARK("fast 32")
+  {
+    test_logs(fasto, 32);
+  };
+  BENCHMARK("slow 32")
+  {
+    test_logs(slowo, 32);
+  };
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
+
+  BENCHMARK("fast 64")
+  {
+    test_logs(fasto, 64);
+  };
+  BENCHMARK("slow 64")
+  {
+    test_logs(slowo, 64);
+  };
+  printf("CAS misses: %llu\n", cas_misses.load());
+  cas_misses.store(0);
 }

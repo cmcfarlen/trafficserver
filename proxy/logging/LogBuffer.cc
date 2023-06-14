@@ -224,6 +224,8 @@ LogBuffer::fast_write(size_t *write_offset, size_t write_size)
   LogBuffer::checkout_write
   -------------------------------------------------------------------------*/
 
+extern thread_local uint64_t tl_cas_misses;
+
 LogBuffer::LB_ResultCode
 LogBuffer::checkout_write(size_t *write_offset, size_t write_size)
 {
@@ -296,6 +298,7 @@ LogBuffer::checkout_write(size_t *write_offset, size_t write_size)
         // we succeeded in setting the new state
         break;
       }
+      tl_cas_misses++;
     }
     ret_val = LB_BUSY;
   } while (--retries);

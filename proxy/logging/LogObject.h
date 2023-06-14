@@ -99,6 +99,9 @@ public:
             int rolling_min_count = 0, bool reopen_after_rolling = false, int pipe_buffer_size = 0, bool m_fast = false);
   ~LogObject() override;
 
+  uint64_t get_local_cas_misses() const;
+  void reset_cas_misses() const;
+
   void add_filter(LogFilter *filter, bool copy = true);
 
   inline void

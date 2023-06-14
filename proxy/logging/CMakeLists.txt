@@ -32,11 +32,29 @@ add_library(logging STATIC
         YamlLogConfig.cc
         YamlLogConfigDecoders.cc
 )
-target_include_directories(logging PRIVATE
+include_directories(logging PRIVATE
         ${IOCORE_INCLUDE_DIRS}
         ${PROXY_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/mgmt
         ${CMAKE_SOURCE_DIR}/mgmt/utils
         ${YAML_INCLUDE_DIRS}
         ${SWOC_INCLUDE_DIR}
+)
+
+add_executable(benchmark_LogObject unit-tests/benchmark_LogObject.cc LogConfig.cc)
+target_include_directories(benchmark_LogObject PRIVATE
+        ${CATCH_INCLUDE_DIR}
+)
+target_link_libraries(benchmark_LogObject
+        tscore
+        tscpputil
+        diagsconfig
+        inkevent
+        logging
+        proxy
+        http
+        hdrs
+        inkutils
+        inkevent
+        inkdns
 )

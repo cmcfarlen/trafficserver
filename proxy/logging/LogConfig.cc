@@ -73,7 +73,7 @@ LogConfig::setup_default_values()
   log_buffer_size       = static_cast<int>(10 * LOG_KILOBYTE);
   log_fast_buffer       = false;
   max_secs_per_buffer   = 5;
-  max_space_mb_for_logs = 100;
+  max_space_mb_for_logs = 1000000;
   max_space_mb_headroom = 10;
   error_log_filename    = ats_strdup("error.log");
   logfile_perm          = 0644;

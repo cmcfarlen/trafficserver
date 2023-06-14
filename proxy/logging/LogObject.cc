@@ -42,6 +42,8 @@
 #include <thread>
 #include <map>
 
+thread_local uint64_t tl_cas_misses = 0;
+
 static bool
 should_roll_on_time(Log::RollingEnabledValues roll)
 {
@@ -65,7 +67,7 @@ LogBufferManager::preproc_buffers(LogBufferSink *sink)
       write_list.push(b);
     } else if (_num_flush_buffers > FLUSH_ARRAY_SIZE) {
       ink_atomic_increment(&_num_flush_buffers, -1);
-      Warning("Dropping log buffer, can't keep up.");
+      // Warning("Dropping log buffer, can't keep up.");
       RecIncrRawStat(log_rsb, this_thread()->mutex->thread_holding, log_stat_bytes_lost_before_preproc_stat,
                      b->header()->byte_count);
       delete b;
@@ -252,6 +254,17 @@ LogObject::rename(char *new_name)
   m_logFile->change_name(new_name);
 }
 
+uint64_t
+LogObject::get_local_cas_misses() const
+{
+  return tl_cas_misses;
+}
+void
+LogObject::reset_cas_misses() const
+{
+  tl_cas_misses = 0;
+}
+
 void
 LogObject::add_filter(LogFilter *filter, bool copy)
 {
@@ -312,11 +325,16 @@ increment_pointer_version(head_p *dst)
 {
   head_p h;
   head_p new_h;
+  bool result;
 
   do {
     INK_QUEUE_LD(h, *dst);
     SET_FREELIST_POINTER_VERSION(new_h, FREELIST_POINTER(h), FREELIST_VERSION(h) + 1);
-  } while (ink_atomic_cas(&dst->data, h.data, new_h.data) == false);
+    result = ink_atomic_cas(&dst->data, h.data, new_h.data);
+    if (!result) {
+      tl_cas_misses++;
+    }
+  } while (!result);
 
   return h;
 }
@@ -327,7 +345,11 @@ write_pointer_version(head_p *dst, head_p old_h, void *ptr, head_p::version_type
   head_p tmp_h;
 
   SET_FREELIST_POINTER_VERSION(tmp_h, ptr, vers);
-  return ink_atomic_cas(&dst->data, old_h.data, tmp_h.data);
+  bool result = ink_atomic_cas(&dst->data, old_h.data, tmp_h.data);
+  if (!result) {
+    tl_cas_misses++;
+  }
+  return result;
 }
 
 LogBuffer *

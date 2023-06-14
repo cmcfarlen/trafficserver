@@ -38,6 +38,22 @@
 #include "configuration.h"
 #include "ts/remap.h"
 
+#include <Cript/Preamble.hpp>
+
+do_read_response()
+{
+  borrow server_resp  = Server::Response::get();
+  borrow pristine_url = Pristine::URL::get();
+
+  if (((server_resp.status == 403) || (server_resp.status == 404)) && (pristine_url.path == ".well-known/security.txt")) {
+    server_resp.status           = 200;
+    server_resp["Cache-Control"] = "max-age=3600";
+    server_resp["Content-Type"]  = "text/plain";
+  }
+}
+
+#include <Cript/Epilogue.hpp>
+
 using namespace std;
 using namespace Gzip;
 
