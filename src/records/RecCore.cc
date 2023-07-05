@@ -34,6 +34,7 @@
 #include "records/P_RecUtils.h"
 #include "tscore/I_Layout.h"
 #include "tscpp/util/ts_errata.h"
+#include "api/Metrics.h"
 
 // This is needed to manage the size of the librecords record. It can't be static, because it needs to be modified
 // and used (read) from several binaries / modules.
@@ -1061,6 +1062,10 @@ RecDumpRecords(RecT rec_type, RecDumpEntryCb callback, void *edata)
       callback(r->rec_type, edata, r->registered, r->name, r->data_type, &r->data);
       rec_mutex_release(&(r->lock));
     }
+  }
+  // Also dump the new ts::Metrics if asked for
+  if (rec_type & TS_RECORDTYPE_PLUGIN) {
+    ts::Metrics::getInstance().recordsDump(callback, edata);
   }
 }
 

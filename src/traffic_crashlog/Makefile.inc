@@ -42,4 +42,5 @@ traffic_crashlog_traffic_crashlog_LDADD = \
 	$(top_builddir)/iocore/net/libinknet.a \
 	$(top_builddir)/src/tscore/libtscore.la \
 	$(top_builddir)/src/tscpp/util/libtscpputil.la \
+	$(top_builddir)/src/api/libtsapi.a \
 	@HWLOC_LIBS@ @SWOC_LIBS@ @YAMLCPP_LIBS@

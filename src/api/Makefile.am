@@ -1,3 +1,4 @@
+# libts Makefile.am
 #
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
@@ -17,28 +18,31 @@
 
 include $(top_srcdir)/mk/tidy.mk
 
-bin_PROGRAMS =
-check_PROGRAMS =
-TESTS =
-lib_LTLIBRARIES =
-noinst_PROGRAMS =
+# check_PROGRAMS = test_api
 
-SUBDIRS = tscpp/api api
+# TESTS_ENVIRONMENT = LSAN_OPTIONS=suppressions=$(abs_top_srcdir)/ci/asan_leak_suppression/unit_tests.txt
+# TESTS = $(check_PROGRAMS)
 
-if BUILD_WCCP
-SUBDIRS += wccp
-include traffic_wccp/Makefile.inc
-endif
+AM_CPPFLAGS += \
+	@SWOC_INCLUDES@ \
+	$(TS_INCLUDES)
 
-include traffic_cache_tool/Makefile.inc
-include traffic_via/Makefile.inc
-include traffic_top/Makefile.inc
-include traffic_server/Makefile.inc
-include traffic_logstats/Makefile.inc
-include traffic_crashlog/Makefile.inc
-include traffic_layout/Makefile.inc
-include traffic_logcat/Makefile.inc
-include traffic_ctl/Makefile.inc
+noinst_LIBRARIES = libtsapi.a
+
+libtsapi_a_SOURCES = \
+	Metrics.cc
+
+# test_tsapi_CPPFLAGS = $(AM_CPPFLAGS)\
+# 	-I$(abs_top_srcdir)/lib/catch2
+
+# test_tsapi_CXXFLAGS = -Wno-array-bounds $(AM_CXXFLAGS)
+# test_tsapi_LDADD = libtsapi.la @SWOC_LIBS@
+# test_tsapi_SOURCES = \
+# 	unit_tests/test_Metrics.cc
+
+# clean-local:
+# 	rm -f ParseRulesCType ParseRulesCTypeToLower ParseRulesCTypeToUpper
+
 
 clang-tidy-local: $(DIST_SOURCES)
 	$(CXX_Clang_Tidy)

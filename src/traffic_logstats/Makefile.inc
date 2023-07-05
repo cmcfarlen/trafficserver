@@ -52,7 +52,8 @@ traffic_logstats_traffic_logstats_LDADD = \
 	$(top_builddir)/iocore/utils/libinkutils.a \
 	$(top_builddir)/src/tscore/libtscore.la \
 	$(top_builddir)/src/tscpp/util/libtscpputil.la \
-        $(top_builddir)/mgmt/utils/libutils_p.la
+    $(top_builddir)/mgmt/utils/libutils_p.la \
+    $(top_builddir)/src/api/libtsapi.a
 
 traffic_logstats_traffic_logstats_LDADD += \
   @SWOC_LIBS@ \
