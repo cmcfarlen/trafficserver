@@ -44,7 +44,7 @@ Metrics::_addBlob() // The mutex must be held before calling this!
   ink_assert(blob);
   ink_assert(_cur_blob < Metrics::METRICS_MAX_BLOBS);
 
-  _blobs[_cur_blob++] = blob;
+  _blobs[++_cur_blob] = blob;
   _cur_off            = 0;
 }
 

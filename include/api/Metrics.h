@@ -32,6 +32,7 @@
 #include <cstdint>
 
 #include "records/P_RecDefs.h"
+#include "ts/apidefs.h"
 
 namespace ts
 {
@@ -63,7 +64,7 @@ public:
 
   virtual ~Metrics() = default;
 
-  Metrics() { _addBlob(); }
+  Metrics() { _blobs[0] = new MetricStorage(); }
 
   // Singleton
   static Metrics &getInstance();

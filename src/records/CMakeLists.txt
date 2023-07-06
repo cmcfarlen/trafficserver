@@ -48,6 +48,7 @@ target_link_libraries(records_p
         #ts::inkevent cyclic dependency; I_RecProcess.h and P_RecProcess.h
         ts::tscore
         ts::tscpputil
+        tsapi
         yaml-cpp::yaml-cpp
 )
 
