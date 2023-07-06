@@ -43,8 +43,8 @@ private:
   using AtomicType = std::atomic<int64_t>;
 
 public:
-  static constexpr uint16_t METRICS_MAX_BLOBS = 2048;
-  static constexpr uint16_t METRICS_MAX_SIZE  = 8192;      // For a total of 16M metrics
+  static constexpr uint16_t METRICS_MAX_BLOBS = 8192;
+  static constexpr uint16_t METRICS_MAX_SIZE  = 2048;      // For a total of 16M metrics
   static constexpr IdType NOT_FOUND           = INT32_MIN; // <16-bit,16-bit> = <blob-index,offset>
 
 private:
