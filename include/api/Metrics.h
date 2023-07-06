@@ -113,40 +113,10 @@ public:
   {
     std::tuple<uint16_t, uint16_t> idx = _splitID(id);
 
-    return (id >= 0 && std::get<0>(idx) < _cur_blob && std::get<1>(idx) < METRICS_MAX_SIZE);
+    return (id >= 0 && std::get<0>(idx) <= _cur_blob && std::get<1>(idx) < METRICS_MAX_SIZE);
   }
 
-  void
-  recordsDump(RecDumpEntryCb callback, void *edata)
-  {
-    return;
-    int16_t blob_ix, off_ix;
-    int16_t off_max = METRICS_MAX_SIZE;
-
-    {
-      std::lock_guard<std::mutex> lock(_mutex);
-
-      // Capture these while protected, in case the blobs change
-      blob_ix = _cur_blob;
-      off_ix  = _cur_off;
-    }
-
-    for (int i = 0; i <= blob_ix; ++i) {
-      auto blob     = _blobs[i];
-      auto &names   = std::get<0>(*blob);
-      auto &metrics = std::get<1>(*blob);
-      RecData datum;
-
-      if (i == blob_ix) {
-        off_max = off_ix;
-      }
-      for (int j = 0; j < off_max; ++j) {
-        datum.rec_int = metrics[j].load();
-        // ToDo: The recordtype here is fine for now, but we should probably make this generic
-        callback(RECT_PLUGIN, edata, 1, std::get<0>(names[i]).c_str(), TS_RECORDDATATYPE_INT, &datum);
-      }
-    }
-  }
+  void recordsDump(RecDumpEntryCb callback, void *edata);
 
 private:
   static constexpr std::tuple<uint16_t, uint16_t>
