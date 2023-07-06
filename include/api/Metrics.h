@@ -40,7 +40,7 @@ class Metrics
 {
 private:
   using self_type  = Metrics;
-  using IdType     = int32_t;
+  using IdType     = int32_t; // Could be a tuple, but one way or another, they have to be combined to an int32_t.
   using AtomicType = std::atomic<int64_t>;
 
 public:
@@ -69,6 +69,10 @@ public:
   // Singleton
   static Metrics &getInstance();
 
+  // Yes, we don't return objects here, but rather ID's and atomic's directly. We could
+  // make these objects, but that's a lot of object instances to manage, and right now the
+  // ID in the containers is very small and sufficient to work with. But agreed, it's not
+  // very C++-like (but compatible with old librecords ATS code!).
   IdType newMetric(const std::string_view name);
   IdType lookup(const std::string_view name);
   AtomicType *lookup(IdType id) const;

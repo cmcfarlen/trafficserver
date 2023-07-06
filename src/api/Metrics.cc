@@ -97,6 +97,9 @@ Metrics::lookup(IdType id) const
   return &(atomics[std::get<1>(idx)]);
 }
 
+// ToDo: This is probably not great, and likely we should have some better
+// way exposing iterators over the Metrics. That avoids this ugly dependency
+// between librecords and this code.
 void
 Metrics::recordsDump(RecDumpEntryCb callback, void *edata)
 {
@@ -123,7 +126,7 @@ Metrics::recordsDump(RecDumpEntryCb callback, void *edata)
     for (int j = 0; j < off_max; ++j) {
       datum.rec_int = metrics[j].load();
       // ToDo: The recordtype here is fine for now, but we should probably make this generic
-      callback(RECT_PLUGIN, edata, 1, std::get<0>(names[i]).c_str(), TS_RECORDDATATYPE_INT, &datum);
+      callback(RECT_PLUGIN, edata, 1, std::get<0>(names[j]).c_str(), TS_RECORDDATATYPE_INT, &datum);
     }
   }
 }
