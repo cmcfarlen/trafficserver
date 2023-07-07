@@ -56,6 +56,13 @@ TEST_CASE("Metrics", "[libtsapi][Metrics]")
     REQUIRE(m.get(fooid) == 1);
   }
 
+  SECTION("operator[]")
+  {
+    m[0].store(42);
+
+    REQUIRE(m.get(0) == 42);
+  }
+
   SECTION("dump")
   {
     m.recordsDump([](RecT, void *, int, const char *name, int value, RecData *) { printf("Fooo: %s: %d\n", name, value); },
