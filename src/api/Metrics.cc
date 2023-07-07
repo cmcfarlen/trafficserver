@@ -108,16 +108,13 @@ Metrics::lookup(IdType id) const
 void
 Metrics::recordsDump(RecDumpEntryCb callback, void *edata)
 {
-  int16_t blob_ix, off_ix;
   int16_t off_max = METRICS_MAX_SIZE;
 
-  {
-    std::lock_guard<std::mutex> lock(_mutex);
-
-    // Capture these while protected, in case the blobs change
-    blob_ix = _cur_blob;
-    off_ix  = _cur_off;
-  }
+  // Capture these under the lock guard
+  _mutex.lock();
+  int16_t blob_ix = _cur_blob;
+  int16_t off_ix  = _cur_off;
+  _mutex.unlock();
 
   for (int i = 0; i <= blob_ix; ++i) {
     auto blob     = _blobs[i];
@@ -130,7 +127,6 @@ Metrics::recordsDump(RecDumpEntryCb callback, void *edata)
     }
     for (int j = 0; j < off_max; ++j) {
       datum.rec_int = metrics[j].load();
-      // ToDo: The recordtype here is fine for now, but we should probably make this generic
       callback(RECT_PLUGIN, edata, 1, std::get<0>(names[j]).c_str(), TS_RECORDDATATYPE_INT, &datum);
     }
   }
