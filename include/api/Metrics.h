@@ -64,7 +64,12 @@ public:
 
   virtual ~Metrics() = default;
 
-  Metrics() { _blobs[0] = new MetricStorage(); }
+  Metrics()
+  {
+    _blobs[0] = new MetricStorage();
+    ink_release_assert(_blobs[0]);
+    ink_release_assert(0 == newMetric("proxy.node.bad_id.metrics")); // Reserve slot 0 for errors, this should always be 0
+  }
 
   // Singleton
   static Metrics &getInstance();
@@ -76,6 +81,18 @@ public:
   IdType newMetric(const std::string_view name);
   IdType lookup(const std::string_view name);
   AtomicType *lookup(IdType id) const;
+
+  AtomicType &
+  operator[](IdType id)
+  {
+    return *lookup(id);
+  }
+
+  IdType
+  operator[](const std::string_view name)
+  {
+    return lookup(name);
+  }
 
   // Inlined, for performance
   int64_t

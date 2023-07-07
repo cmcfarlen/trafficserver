@@ -386,6 +386,7 @@ HttpAPIHooks *http_global_hooks        = nullptr;
 SslAPIHooks *ssl_hooks                 = nullptr;
 LifecycleAPIHooks *lifecycle_hooks     = nullptr;
 ConfigUpdateCbTable *global_config_cbs = nullptr;
+static ts::Metrics &global_api_metrics = ts::Metrics::getInstance();
 
 static char traffic_server_version[128] = "";
 static int ts_major_version             = 0;
@@ -749,7 +750,7 @@ sdk_sanity_check_null_ptr(void const *ptr)
 static TSReturnCode
 sdk_sanity_check_stat_id(int id)
 {
-  return (ts::Metrics::getInstance().valid(id) ? TS_SUCCESS : TS_ERROR);
+  return (global_api_metrics.valid(id) ? TS_SUCCESS : TS_ERROR);
 }
 
 static TSReturnCode
@@ -7492,7 +7493,7 @@ TSCacheScan(TSCont contp, TSCacheKey key, int KB_per_second)
 int
 TSStatCreate(const char *the_name, TSRecordDataType the_type, TSStatPersistence persist, TSStatSync sync)
 {
-  int id = ts::Metrics::getInstance().newMetric(the_name);
+  int id = global_api_metrics.newMetric(the_name);
 
   if (id == ts::Metrics::NOT_FOUND) {
     return TS_ERROR;
@@ -7505,28 +7506,28 @@ void
 TSStatIntIncrement(int id, TSMgmtInt amount)
 {
   sdk_assert(sdk_sanity_check_stat_id(id) == TS_SUCCESS);
-  ts::Metrics::getInstance().increment(id, amount);
+  global_api_metrics[id].fetch_add(amount);
 }
 
 void
 TSStatIntDecrement(int id, TSMgmtInt amount)
 {
   sdk_assert(sdk_sanity_check_stat_id(id) == TS_SUCCESS);
-  ts::Metrics::getInstance().decrement(id, amount);
+  global_api_metrics[id].fetch_sub(amount);
 }
 
 TSMgmtInt
 TSStatIntGet(int id)
 {
   sdk_assert(sdk_sanity_check_stat_id(id) == TS_SUCCESS);
-  return ts::Metrics::getInstance().get(id);
+  return global_api_metrics.get(id);
 }
 
 void
 TSStatIntSet(int id, TSMgmtInt value)
 {
   sdk_assert(sdk_sanity_check_stat_id(id) == TS_SUCCESS);
-  ts::Metrics::getInstance().set(id, value);
+  global_api_metrics.set(id, value);
 }
 
 TSReturnCode
@@ -7535,7 +7536,7 @@ TSStatFindName(const char *name, int *idp)
   sdk_assert(sdk_sanity_check_null_ptr((void *)name) == TS_SUCCESS);
   sdk_assert(sdk_sanity_check_null_ptr((void *)idp) == TS_SUCCESS);
 
-  int id = ts::Metrics::getInstance().lookup(name);
+  int id = global_api_metrics.lookup(name);
 
   if (id == ts::Metrics::NOT_FOUND) {
     return TS_ERROR;

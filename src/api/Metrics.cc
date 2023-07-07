@@ -90,11 +90,16 @@ Metrics::lookup(const std::string_view name)
 Metrics::AtomicType *
 Metrics::lookup(IdType id) const
 {
-  std::tuple<uint16_t, uint16_t> idx = _splitID(id);
-  Metrics::MetricStorage *blob       = _blobs[std::get<0>(idx)];
-  Metrics::AtomicContainer &atomics  = std::get<1>(*blob);
+  auto [blob_ix, offset]       = _splitID(id);
+  Metrics::MetricStorage *blob = _blobs[blob_ix];
 
-  return &(atomics[std::get<1>(idx)]);
+  // Do a sanity check on the ID, to make sure we don't index outside of the realm of possibility.
+  if (!blob || (blob_ix == _cur_blob && offset > _cur_off)) {
+    blob   = _blobs[0];
+    offset = 0;
+  }
+
+  return &((std::get<1>(*blob)[offset]));
 }
 
 // ToDo: This is probably not great, and likely we should have some better
