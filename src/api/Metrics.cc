@@ -102,33 +102,33 @@ Metrics::lookup(IdType id) const
   return &((std::get<1>(*blob)[offset]));
 }
 
-// ToDo: This is probably not great, and likely we should have some better
-// way exposing iterators over the Metrics. That avoids this ugly dependency
-// between librecords and this code.
+std::string_view
+Metrics::get_name(Metrics::IdType id) const
+{
+  auto [blob_ix, offset]       = _splitID(id);
+  Metrics::MetricStorage *blob = _blobs[blob_ix];
+
+  // Do a sanity check on the ID, to make sure we don't index outside of the realm of possibility.
+  if (!blob || (blob_ix == _cur_blob && offset > _cur_off)) {
+    blob   = _blobs[0];
+    offset = 0;
+  }
+
+  const std::string &result = std::get<0>(std::get<0>(*blob)[offset]);
+  return result;
+}
+
+// ToDo: While this is using iterators now, there is this unfortunate use of .data()
+// that should probably go away.  I had problems using const std::string& in the iterator
+// value_type so this needs to be revisited.
 void
 Metrics::recordsDump(RecDumpEntryCb callback, void *edata) const
 {
-  int16_t off_max = METRICS_MAX_SIZE;
+  RecData datum;
 
-  // Capture these under the lock guard
-  _mutex.lock();
-  int16_t blob_ix = _cur_blob;
-  int16_t off_ix  = _cur_off;
-  _mutex.unlock();
-
-  for (int i = 0; i <= blob_ix; ++i) {
-    auto blob     = _blobs[i];
-    auto &names   = std::get<0>(*blob);
-    auto &metrics = std::get<1>(*blob);
-    RecData datum;
-
-    if (i == blob_ix) {
-      off_max = off_ix;
-    }
-    for (int j = 0; j < off_max; ++j) {
-      datum.rec_int = metrics[j].load();
-      callback(RECT_PLUGIN, edata, 1, std::get<0>(names[j]).c_str(), TS_RECORDDATATYPE_INT, &datum);
-    }
+  for (auto [name, metric] : *this) {
+    datum.rec_int = metric;
+    callback(RECT_PLUGIN, edata, 1, name.data(), TS_RECORDDATATYPE_INT, &datum);
   }
 }
 

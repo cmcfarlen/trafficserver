@@ -30,11 +30,39 @@ TEST_CASE("Metrics", "[libtsapi][Metrics]")
 {
   ts::Metrics m;
 
-  auto fooid = m.newMetric("foo");
+  SECTION("iterator")
+  {
+    auto [name, value] = *m.begin();
+    REQUIRE(value == 0);
+    REQUIRE(name == "proxy.node.bad_id.metrics");
 
-  REQUIRE(fooid == 1);
+    REQUIRE(m.begin() != m.end());
+    REQUIRE(++m.begin() == m.end());
 
-  m.increment(fooid);
+    auto it = m.begin();
+    it++;
+    REQUIRE(it == m.end());
+  }
 
-  m.recordsDump([](RecT, void *, int, const char *name, int value, RecData *) { printf("Fooo: %s: %d\n", name, value); }, nullptr);
+  SECTION("New metric")
+  {
+    auto fooid = m.newMetric("foo");
+
+    REQUIRE(fooid == 1);
+    REQUIRE(m.get_name(fooid) == "foo");
+
+    REQUIRE(m.get(fooid) == 0);
+    m.increment(fooid);
+    REQUIRE(m.get(fooid) == 1);
+  }
+
+  SECTION("dump")
+  {
+    m.recordsDump([](RecT, void *, int, const char *name, int value, RecData *) { printf("Fooo: %s: %d\n", name, value); },
+                  nullptr);
+
+    for (auto [name, metric] : m) {
+      std::cout << name << ": " << metric << "\n";
+    }
+  }
 }

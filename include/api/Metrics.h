@@ -119,6 +119,8 @@ public:
     return (metric ? metric->load() : NOT_FOUND);
   }
 
+  std::string_view get_name(IdType id) const;
+
   void
   set(IdType id, int64_t val)
   {
@@ -139,11 +141,94 @@ public:
 
   void recordsDump(RecDumpEntryCb callback, void *edata) const;
 
+  class iterator
+  {
+  public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type        = std::pair<std::string_view, AtomicType::value_type>;
+    using difference_type   = ptrdiff_t;
+    using pointer           = value_type *;
+    using reference         = value_type &;
+
+    iterator(const Metrics &m, IdType pos) : metrics(m), it(pos) {}
+
+    iterator &
+    operator++()
+    {
+      next();
+      return *this;
+    }
+
+    iterator
+    operator++(int)
+    {
+      iterator result = *this;
+      next();
+      return result;
+    }
+
+    value_type
+    operator*() const
+    {
+      return std::make_pair(metrics.get_name(it), metrics.lookup(it)->load());
+    }
+
+    bool
+    operator==(const iterator &o) const
+    {
+      return std::addressof(metrics) == std::addressof(o.metrics) && it == o.it;
+    }
+    bool
+    operator!=(const iterator &o) const
+    {
+      return std::addressof(metrics) != std::addressof(o.metrics) || it != o.it;
+    }
+
+  private:
+    void
+    next()
+    {
+      auto [blob, offset] = metrics._splitID(it);
+
+      if (++offset == METRICS_MAX_SIZE) {
+        ++blob;
+        offset = 0;
+      }
+
+      it = _makeId(blob, offset);
+    }
+
+    const Metrics &metrics;
+    IdType it;
+  };
+
+  iterator
+  begin() const
+  {
+    return iterator(*this, 0);
+  }
+
+  iterator
+  end() const
+  {
+    _mutex.lock();
+    int16_t blob   = _cur_blob;
+    int16_t offset = _cur_off;
+    _mutex.unlock();
+    return iterator(*this, _makeId(blob, offset));
+  }
+
 private:
   static constexpr std::tuple<uint16_t, uint16_t>
   _splitID(IdType value)
   {
     return std::make_tuple(static_cast<uint16_t>(value >> 16), static_cast<uint16_t>(value & 0xFFFF));
+  }
+
+  static constexpr IdType
+  _makeId(uint16_t blob, uint16_t offset)
+  {
+    return (blob << 16 | offset);
   }
 
   void _addBlob();
