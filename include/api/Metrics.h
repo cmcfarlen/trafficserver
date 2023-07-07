@@ -45,8 +45,8 @@ private:
 
 public:
   static constexpr uint16_t METRICS_MAX_BLOBS = 8192;
-  static constexpr uint16_t METRICS_MAX_SIZE  = 2048;      // For a total of 16M metrics
-  static constexpr IdType NOT_FOUND           = INT32_MIN; // <16-bit,16-bit> = <blob-index,offset>
+  static constexpr uint16_t METRICS_MAX_SIZE  = 2048;                               // For a total of 16M metrics
+  static constexpr IdType NOT_FOUND           = std::numeric_limits<IdType>::min(); // <16-bit,16-bit> = <blob-index,offset>
 
 private:
   using NameAndId       = std::tuple<std::string, IdType>;
@@ -79,7 +79,7 @@ public:
   // ID in the containers is very small and sufficient to work with. But agreed, it's not
   // very C++-like (but compatible with old librecords ATS code!).
   IdType newMetric(const std::string_view name);
-  IdType lookup(const std::string_view name);
+  IdType lookup(const std::string_view name) const;
   AtomicType *lookup(IdType id) const;
 
   AtomicType &
@@ -89,7 +89,7 @@ public:
   }
 
   IdType
-  operator[](const std::string_view name)
+  operator[](const std::string_view name) const
   {
     return lookup(name);
   }
@@ -132,12 +132,12 @@ public:
   bool
   valid(IdType id) const
   {
-    std::tuple<uint16_t, uint16_t> idx = _splitID(id);
+    auto [blob, entry] = _splitID(id);
 
-    return (id >= 0 && std::get<0>(idx) <= _cur_blob && std::get<1>(idx) < METRICS_MAX_SIZE);
+    return (id >= 0 && blob <= _cur_blob && entry < METRICS_MAX_SIZE);
   }
 
-  void recordsDump(RecDumpEntryCb callback, void *edata);
+  void recordsDump(RecDumpEntryCb callback, void *edata) const;
 
 private:
   static constexpr std::tuple<uint16_t, uint16_t>
@@ -148,7 +148,7 @@ private:
 
   void _addBlob();
 
-  std::mutex _mutex;
+  mutable std::mutex _mutex;
   LookupTable _lookups;
   MetricBlobs _blobs;
   uint16_t _cur_blob = 0;

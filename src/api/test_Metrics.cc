@@ -32,7 +32,7 @@ TEST_CASE("Metrics", "[libtsapi][Metrics]")
 
   auto fooid = m.newMetric("foo");
 
-  REQUIRE(fooid == 0);
+  REQUIRE(fooid == 1);
 
   m.increment(fooid);
 

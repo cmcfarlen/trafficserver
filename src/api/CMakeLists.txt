@@ -15,7 +15,7 @@
 #
 #######################
 
-add_library(tsapi STATIC Metrics.cc)
+add_library(tsapi SHARED Metrics.cc)
 
 add_executable(test_Metrics
         test_Metrics.cc

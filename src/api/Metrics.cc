@@ -75,7 +75,7 @@ Metrics::newMetric(std::string_view name)
 }
 
 Metrics::IdType
-Metrics::lookup(const std::string_view name)
+Metrics::lookup(const std::string_view name) const
 {
   std::lock_guard<std::mutex> lock(_mutex);
   auto it = _lookups.find(name);
@@ -106,7 +106,7 @@ Metrics::lookup(IdType id) const
 // way exposing iterators over the Metrics. That avoids this ugly dependency
 // between librecords and this code.
 void
-Metrics::recordsDump(RecDumpEntryCb callback, void *edata)
+Metrics::recordsDump(RecDumpEntryCb callback, void *edata) const
 {
   int16_t off_max = METRICS_MAX_SIZE;
 
