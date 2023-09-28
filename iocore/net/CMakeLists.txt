@@ -127,6 +127,8 @@ target_link_libraries(inknet
         OpenSSL::SSL
     PRIVATE
         yaml-cpp::yaml-cpp
+        ts::inkhostdb
+        ts::inkdns
 )
 
 if(TS_USE_LINUX_IO_URING)

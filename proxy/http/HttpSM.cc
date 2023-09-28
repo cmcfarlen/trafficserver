@@ -37,7 +37,6 @@
 #include "HttpVCTable.h"
 #include "P_Cache.h"
 #include "P_Net.h"
-#include "PreWarmConfig.h"
 #include "StatPages.h"
 #include "Log.h"
 #include "LogAccess.h"
@@ -5243,7 +5242,7 @@ HttpSM::grab_pre_warmed_net_v_connection_if_possible(const TLSTunnelSupport &tts
 bool
 HttpSM::is_prewarm_enabled_or_sni_overridden(const TLSTunnelSupport &tts) const
 {
-  PreWarmConfig::scoped_config prewarm_conf;
+  PreWarm::PreWarmConfig::scoped_config prewarm_conf;
   bool result = prewarm_conf->enabled;
 
   if (YamlSNIConfig::TunnelPreWarm sni_use_prewarm = tts.get_tunnel_prewarm_configuration();

@@ -391,7 +391,6 @@ namespace c
 } // end namespace c
 } // end namespace tsapi
 
-HttpAPIHooks *http_global_hooks        = nullptr;
 SslAPIHooks *ssl_hooks                 = nullptr;
 LifecycleAPIHooks *lifecycle_hooks     = nullptr;
 ConfigUpdateCbTable *global_config_cbs = nullptr;
@@ -402,7 +401,6 @@ static int ts_major_version             = 0;
 static int ts_minor_version             = 0;
 static int ts_patch_version             = 0;
 
-static ClassAllocator<APIHook> apiHookAllocator("apiHookAllocator");
 extern ClassAllocator<INKContInternal> INKContAllocator;
 extern ClassAllocator<INKVConnInternal> INKVConnAllocator;
 static ClassAllocator<MIMEFieldSDKHandle> mHandleAllocator("MIMEFieldSDKHandle");
@@ -1040,158 +1038,6 @@ FileImpl::fgets(char *buf, size_t length)
   }
 
   return buf;
-}
-
-////////////////////////////////////////////////////////////////////
-//
-// APIHook, APIHooks, HttpAPIHooks, HttpHookState
-//
-////////////////////////////////////////////////////////////////////
-APIHook *
-APIHook::next() const
-{
-  return m_link.next;
-}
-
-APIHook *
-APIHook::prev() const
-{
-  return m_link.prev;
-}
-
-int
-APIHook::invoke(int event, void *edata) const
-{
-  if (event == EVENT_IMMEDIATE || event == EVENT_INTERVAL || event == TS_EVENT_HTTP_TXN_CLOSE) {
-    if (ink_atomic_increment((int *)&m_cont->m_event_count, 1) < 0) {
-      ink_assert(!"not reached");
-    }
-  }
-  WEAK_MUTEX_TRY_LOCK(lock, m_cont->mutex, this_ethread());
-  if (!lock.is_locked()) {
-    // If we cannot get the lock, the caller needs to restructure to handle rescheduling
-    ink_release_assert(0);
-  }
-  return m_cont->handleEvent(event, edata);
-}
-
-int
-APIHook::blocking_invoke(int event, void *edata) const
-{
-  if (event == EVENT_IMMEDIATE || event == EVENT_INTERVAL || event == TS_EVENT_HTTP_TXN_CLOSE) {
-    if (ink_atomic_increment((int *)&m_cont->m_event_count, 1) < 0) {
-      ink_assert(!"not reached");
-    }
-  }
-
-  WEAK_SCOPED_MUTEX_LOCK(lock, m_cont->mutex, this_ethread());
-
-  return m_cont->handleEvent(event, edata);
-}
-
-APIHook *
-APIHooks::head() const
-{
-  return m_hooks.head;
-}
-
-void
-APIHooks::append(INKContInternal *cont)
-{
-  APIHook *api_hook;
-
-  api_hook         = THREAD_ALLOC(apiHookAllocator, this_thread());
-  api_hook->m_cont = cont;
-
-  m_hooks.enqueue(api_hook);
-}
-
-void
-APIHooks::clear()
-{
-  APIHook *hook;
-  while (nullptr != (hook = m_hooks.pop())) {
-    THREAD_FREE(hook, apiHookAllocator, this_thread());
-  }
-}
-
-void
-HttpHookState::init(TSHttpHookID id, HttpAPIHooks const *global, HttpAPIHooks const *ssn, HttpAPIHooks const *txn)
-{
-  _id = id;
-
-  if (global) {
-    _global.init(global, id);
-  } else {
-    _global.clear();
-  }
-
-  if (ssn) {
-    _ssn.init(ssn, id);
-  } else {
-    _ssn.clear();
-  }
-
-  if (txn) {
-    _txn.init(txn, id);
-  } else {
-    _txn.clear();
-  }
-}
-
-APIHook const *
-HttpHookState::getNext()
-{
-  APIHook const *zret = nullptr;
-
-#ifdef DEBUG
-  Debug("plugin", "computing next callback for hook %d", _id);
-#endif
-
-  if (zret = _global.candidate(); zret) {
-    ++_global;
-  } else if (zret = _ssn.candidate(); zret) {
-    ++_ssn;
-  } else if (zret = _txn.candidate(); zret) {
-    ++_txn;
-  }
-
-  return zret;
-}
-
-void
-HttpHookState::Scope::init(HttpAPIHooks const *feature_hooks, TSHttpHookID id)
-{
-  _hooks = (*feature_hooks)[id];
-
-  _p = nullptr;
-  _c = _hooks->head();
-}
-
-APIHook const *
-HttpHookState::Scope::candidate()
-{
-  /// Simply returns _c hook for now. Later will do priority checking here
-
-  // Check to see if a hook has been added since this was initialized empty
-  if (nullptr == _c && nullptr == _p && _hooks != nullptr) {
-    _c = _hooks->head();
-  }
-  return _c;
-}
-
-void
-HttpHookState::Scope::operator++()
-{
-  _p = _c;
-  _c = _c->next();
-}
-
-void
-HttpHookState::Scope::clear()
-{
-  _hooks = nullptr;
-  _p = _c = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////

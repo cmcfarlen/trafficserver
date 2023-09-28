@@ -22,7 +22,6 @@
  */
 
 #include "PreWarmManager.h"
-#include "PreWarmConfig.h"
 
 #include "HttpConfig.h"
 #include "SSLSNIConfig.h"
@@ -890,7 +889,7 @@ void
 PreWarmQueue::_reconfigure()
 {
   {
-    PreWarmConfig::scoped_config prewarm_conf;
+    PreWarm::PreWarmConfig::scoped_config prewarm_conf;
 
     _event_period = HRTIME_MSECONDS(prewarm_conf->event_period);
     _algorithm    = PreWarm::algorithm_version(prewarm_conf->algorithm);
@@ -1000,7 +999,7 @@ PreWarmManager::reconfigure_prewarming_on_threads()
 void
 PreWarmManager::start()
 {
-  PreWarmConfig::startup();
+  PreWarm::PreWarmConfig::startup();
 
   _mutex = new_ProxyMutex();
 
@@ -1017,7 +1016,7 @@ PreWarmManager::reconfigure()
 
   SCOPED_MUTEX_LOCK(lock, _mutex, this_ethread());
 
-  PreWarmConfig::scoped_config prewarm_conf;
+  PreWarm::PreWarmConfig::scoped_config prewarm_conf;
   bool is_prewarm_enabled = prewarm_conf->enabled;
 
   SNIConfig::scoped_config sni_conf;
@@ -1068,7 +1067,7 @@ PreWarmManager::get_stats_id_map() const
 void
 PreWarmManager::_parse_sni_conf(PreWarm::ParsedSNIConf &parsed_conf, const SNIConfigParams *sni_conf) const
 {
-  PreWarmConfig::scoped_config prewarm_conf;
+  PreWarm::PreWarmConfig::scoped_config prewarm_conf;
 
   for (const auto &item : sni_conf->yaml_sni.items) {
     if (item.tunnel_type != SNIRoutingType::FORWARD && item.tunnel_type != SNIRoutingType::PARTIAL_BLIND) {
@@ -1174,3 +1173,57 @@ PreWarmManager::_register_stats(const PreWarm::ParsedSNIConf &parsed_conf)
 
   Note("%d dynamic stats are registered for pre-warming tunnel", stats_counter);
 }
+
+namespace PreWarm
+{
+
+////
+// PreWarmConfigParams
+//
+PreWarmConfigParams::PreWarmConfigParams()
+{
+  // RECU_RESTART_TS
+  REC_EstablishStaticConfigByte(enabled, "proxy.config.tunnel.prewarm.enabled");
+  REC_EstablishStaticConfigInteger(max_stats_size, "proxy.config.tunnel.prewarm.max_stats_size");
+
+  // RECU_DYNAMIC
+  REC_ReadConfigInteger(event_period, "proxy.config.tunnel.prewarm.event_period");
+  REC_ReadConfigInteger(algorithm, "proxy.config.tunnel.prewarm.algorithm");
+}
+
+////
+// PreWarmConfig
+//
+void
+PreWarmConfig::startup()
+{
+  _config_update_handler = std::make_unique<ConfigUpdateHandler<PreWarmConfig>>();
+
+  // dynamic configs
+  _config_update_handler->attach("proxy.config.tunnel.prewarm.event_period");
+  _config_update_handler->attach("proxy.config.tunnel.prewarm.algorithm");
+
+  reconfigure();
+}
+
+void
+PreWarmConfig::reconfigure()
+{
+  PreWarmConfigParams *params = new PreWarmConfigParams();
+  _config_id                  = configProcessor.set(_config_id, params);
+
+  prewarmManager.reconfigure();
+}
+
+PreWarmConfigParams *
+PreWarmConfig::acquire()
+{
+  return static_cast<PreWarmConfigParams *>(configProcessor.get(_config_id));
+}
+
+void
+PreWarmConfig::release(PreWarmConfigParams *params)
+{
+  configProcessor.release(_config_id, params);
+}
+} // namespace PreWarm

@@ -67,6 +67,7 @@ target_link_libraries(proxy
         ts::tscore
     PRIVATE
         ts::inkutils
+        ts::jsonrpc_server
 )
 
 add_subdirectory(hdrs)

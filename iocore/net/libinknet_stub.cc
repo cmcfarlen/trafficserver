@@ -21,130 +21,17 @@
   limitations under the License.
  */
 
+#include "tscore/I_Version.h"
 class EThread;
 class Continuation;
 
 #include "P_UnixNet.h"
-#include "P_DNSConnection.h"
-int
-DNSConnection::close()
-{
-  ink_assert(false);
-  return 0;
-}
-
-void
-DNSConnection::trigger()
-{
-  ink_assert(false);
-}
-
-#include "StatPages.h"
-void
-StatPagesManager::register_http(char const *, Action *(*)(Continuation *, HTTPHdr *))
-{
-  ink_assert(false);
-}
-
-#include "ParentSelection.h"
-void
-SocksServerConfig::startup()
-{
-  ink_assert(false);
-}
-
-int SocksServerConfig::m_id = 0;
-
-void
-ParentConfigParams::findParent(HttpRequestData *, ParentResult *, unsigned int, unsigned int)
-{
-  ink_assert(false);
-}
-
-void
-ParentConfigParams::nextParent(HttpRequestData *, ParentResult *, unsigned int, unsigned int)
-{
-  ink_assert(false);
-}
-
 #include "api/InkAPIInternal.h"
-int
-APIHook::invoke(int, void *) const
-{
-  ink_assert(false);
-  return 0;
-}
-
-int
-APIHook::blocking_invoke(int, void *) const
-{
-  ink_assert(false);
-  return 0;
-}
-
-APIHook *
-APIHook::next() const
-{
-  ink_assert(false);
-  return nullptr;
-}
-
-APIHook *
-APIHook::prev() const
-{
-  ink_assert(false);
-  return nullptr;
-}
-
-APIHook *
-APIHooks::head() const
-{
-  ink_assert(false);
-  return nullptr;
-}
-
-#include "ControlMatcher.h"
-char *
-HttpRequestData::get_string()
-{
-  ink_assert(false);
-  return nullptr;
-}
-
-const char *
-HttpRequestData::get_host()
-{
-  ink_assert(false);
-  return nullptr;
-}
-
-sockaddr const *
-HttpRequestData::get_ip()
-{
-  ink_assert(false);
-  return nullptr;
-}
-
-sockaddr const *
-HttpRequestData::get_client_ip()
-{
-  ink_assert(false);
-  return nullptr;
-}
 
 SslAPIHooks *ssl_hooks             = nullptr;
 LifecycleAPIHooks *lifecycle_hooks = nullptr;
-StatPagesManager statPagesManager;
 
-#include "PreWarmManager.h"
-void
-PreWarmManager::reconfigure()
-{
-  ink_assert(false);
-  return;
-}
-
-PreWarmManager prewarmManager;
+AppVersionInfo appVersionInfo;
 
 #include "api/FetchSM.h"
 ClassAllocator<FetchSM> FetchSMAllocator("unusedFetchSMAllocator");
@@ -182,5 +69,3 @@ void
 FetchSM::ext_init(Continuation *, char const *, char const *, char const *, sockaddr const *, int)
 {
 }
-
-ChunkedHandler::ChunkedHandler() {}

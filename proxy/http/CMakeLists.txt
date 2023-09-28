@@ -38,7 +38,6 @@ add_library(http STATIC
         HttpVCTable.cc
         ConnectingEntry.cc
         ForwardedConfig.cc
-        PreWarmConfig.cc
 )
 add_library(ts::http ALIAS http)
 
@@ -65,6 +64,7 @@ target_link_libraries(http
     PRIVATE
         ts::inkcache
         ts::inkutils
+        ts::logging
 )
 
 if(TS_USE_QUIC)

@@ -28,6 +28,9 @@ add_library(tsapicore STATIC
   InkContInternal.cc
   InkVConnInternal.cc
   FetchSM.cc
+  HttpHookState.cc
+  APIHooks.cc
+  ChunkedHandler.cc
 )
 add_library(ts::tsapicore ALIAS tsapicore)
 target_link_libraries(tsapicore PRIVATE ts::tscore)

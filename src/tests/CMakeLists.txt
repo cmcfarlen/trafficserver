@@ -23,39 +23,39 @@ include_directories(
 )
 
 link_libraries(
-        inkcache
-        http
-        http_remap
-        http2
-        logging
-        hdrs
-        diagsconfig
-        inkutils
-        inkdns
-        inkhostdb
-        proxy
-        http
-        inkutils
-        inkdns
-        inkhostdb
-        proxy
-        http
-        hdrs
-        http_remap
-        logging
-        fastlz
-        aio
-        records
-        tscore
-        tsapicore
-        tscpputil
-        proxy
-        inknet
-        inkevent
-        yaml-cpp
-        libswoc
+  #        inkcache
+  #        http
+  #        http_remap
+  #        http2
+  #        logging
+  #        hdrs
+  #        diagsconfig
+  #        inkutils
+  #        inkdns
+  #        inkhostdb
+  #        proxy
+  #        http
+  #        inkutils
+  #        inkdns
+  #        inkhostdb
+  #        proxy
+  #        http
+  #        hdrs
+  #        http_remap
+  #        logging
+  #        fastlz
+  #        aio
+  #        records
+  #        tscore
+  #        tsapicore
+  #        tscpputil
+  #        proxy
+  #        inknet
+  #        inkevent
+  #        yaml-cpp
+  #        libswoc
         catch2::catch2
-        jsonrpc_protocol
+        #        jsonrpc_protocol
 )
 if (TS_USE_LINUX_IO_URING)
     link_libraries(inkuring uring)
@@ -67,7 +67,13 @@ macro(add_cache_test name)
             ${CMAKE_SOURCE_DIR}/iocore/cache/test/stub.cc
             ${CMAKE_SOURCE_DIR}/iocore/cache/test/CacheTestHandler.cc
             ${ARGN})
-    target_link_libraries(${name} PRIVATE ts::proxy)
+    target_link_libraries(${name} PRIVATE
+      ts::proxy
+      ts::hdrs
+      ts::http
+      ts::http_remap
+      ts::inknet
+      )
     add_test(NAME test_cache_${name} COMMAND $<TARGET_FILE:${name}>)
 endmacro()
 
@@ -75,7 +81,10 @@ macro(add_net_test name)
     add_executable(${name}
             ${CMAKE_SOURCE_DIR}/iocore/net/libinknet_stub.cc
             ${ARGN})
-    target_link_libraries(${name} PRIVATE ts::proxy)
+    target_link_libraries(${name} PRIVATE
+        ts::proxy
+        ts::inknet
+    )
     add_test(NAME test_cache_${name} COMMAND $<TARGET_FILE:${name}>)
 endmacro()
 
@@ -113,6 +122,7 @@ add_cache_test(Update_S_to_L ${CMAKE_SOURCE_DIR}/iocore/cache/test/test_Update_S
 
 add_executable(test_AIO ${CMAKE_SOURCE_DIR}/iocore/aio/test_AIO.cc)
 add_test(NAME test_AIO COMMAND $<TARGET_FILE:test_AIO> WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/iocore/aio)
+target_link_libraries(test_AIO PRIVATE ts::aio)
 
 add_net_test(test_net
     "${CMAKE_SOURCE_DIR}/iocore/net/unit_tests/test_ProxyProtocol.cc"

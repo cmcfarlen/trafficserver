@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "ConfigProcessor.h"
 #include "PreWarmAlgorithm.h"
 
 #include "I_EventSystem.h"
@@ -50,6 +51,40 @@ extern PreWarmManager prewarmManager;
 
 namespace PreWarm
 {
+
+struct PreWarmConfigParams : public ConfigInfo {
+  PreWarmConfigParams();
+
+  // noncopyable
+  PreWarmConfigParams(const PreWarmConfigParams &)            = delete;
+  PreWarmConfigParams &operator=(const PreWarmConfigParams &) = delete;
+
+  // Config Params
+  int8_t enabled         = 0;
+  int8_t algorithm       = 0;
+  int64_t event_period   = 0;
+  int64_t max_stats_size = 0;
+};
+
+class PreWarmConfig
+{
+public:
+  using scoped_config = ConfigProcessor::scoped_config<PreWarmConfig, PreWarmConfigParams>;
+
+  static void startup();
+
+  // ConfigUpdateContinuation interface
+  static void reconfigure();
+
+  // ConfigProcessor::scoped_config interface
+  static PreWarmConfigParams *acquire();
+  static void release(PreWarmConfigParams *params);
+
+private:
+  inline static int _config_id = 0;
+  inline static std::unique_ptr<ConfigUpdateHandler<PreWarmConfig>> _config_update_handler;
+};
+
 ////
 // Dst
 //

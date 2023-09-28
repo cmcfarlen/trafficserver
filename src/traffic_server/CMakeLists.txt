@@ -21,6 +21,7 @@ add_executable(traffic_server
         SocksProxy.cc
         traffic_server.cc
         RpcAdminPubHandlers.cc
+        PluginInit.cc
         ${CMAKE_SOURCE_DIR}/src/shared/overridable_txn_vars.cc
         )
 target_include_directories(traffic_server PRIVATE
