@@ -84,6 +84,7 @@ macro(add_net_test name)
     target_link_libraries(${name} PRIVATE
         ts::proxy
         ts::inknet
+        ts::http
     )
     add_test(NAME test_cache_${name} COMMAND $<TARGET_FILE:${name}>)
 endmacro()
@@ -92,7 +93,10 @@ macro(add_stubbed_test name)
     add_executable(${name}
             ${CMAKE_SOURCE_DIR}/iocore/cache/test/stub.cc
             ${ARGN})
-    target_link_libraries(${name} PRIVATE ts::proxy)
+    target_link_libraries(${name} PRIVATE
+      ts::proxy
+      ts::hdrs
+      )
     add_test(NAME test_stubbed_${name} COMMAND $<TARGET_FILE:${name}>)
 endmacro()
 
@@ -142,12 +146,15 @@ target_link_libraries(test_net
 )
 
 add_stubbed_test(EventSystem ${CMAKE_SOURCE_DIR}/iocore/eventsystem/unit_tests/test_EventSystem.cc)
+target_link_libraries(EventSystem PRIVATE ts::inknet)
 add_stubbed_test(IOBuffer ${CMAKE_SOURCE_DIR}/iocore/eventsystem/unit_tests/test_IOBuffer.cc)
 
 add_stubbed_test(HttpTransact
   ${CMAKE_SOURCE_DIR}/proxy/http/unit_tests/main.cc
   ${CMAKE_SOURCE_DIR}/proxy/http/unit_tests/test_HttpTransact.cc
 )
+target_link_libraries(HttpTransact PRIVATE
+  ts::inknet)
 
 # maybe move this one back to iocore/eventsystem/CMakeLists.txt
 #add_stubbed_test(MIOBufferWriter ${CMAKE_SOURCE_DIR}/iocore/eventsystem/unit_tests/test_MIOBufferWriter.cc)

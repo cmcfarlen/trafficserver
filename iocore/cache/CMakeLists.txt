@@ -59,6 +59,7 @@ target_link_libraries(inkcache
         ts::tscore
     PRIVATE
         ts::proxy
+        ts::http
         fastlz
         ZLIB::ZLIB
 )

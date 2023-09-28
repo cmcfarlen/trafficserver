@@ -41,6 +41,7 @@ target_link_libraries(inkhostdb
         ts::inkcache
         ts::inkevent
         ts::tscore
+        ts::inknet
     PRIVATE
         ts::proxy
 )

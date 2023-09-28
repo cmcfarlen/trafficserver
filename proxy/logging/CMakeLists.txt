@@ -46,6 +46,7 @@ target_link_libraries(logging
         ts::inkutils
         ts::proxy
         ts::tscore
+        ts::hdrs
         yaml-cpp::yaml-cpp
 )
 

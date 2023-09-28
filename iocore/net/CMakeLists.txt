@@ -123,6 +123,7 @@ target_link_libraries(inknet
         ts::proxy
         ts::records
         ts::tscore
+        ts::http_remap
         OpenSSL::Crypto
         OpenSSL::SSL
     PRIVATE
