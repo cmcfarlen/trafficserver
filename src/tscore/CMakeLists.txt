@@ -127,6 +127,13 @@ endif()
 if(TS_USE_HWLOC)
     target_link_libraries(tscore PUBLIC hwloc::hwloc)
 endif()
+if(TS_HAS_JEMALLOC)
+    target_link_libraries(tscore PUBLIC jemalloc::jemalloc)
+endif()
+if(TS_HAS_MIMALLOC)
+    target_link_libraries(tscore PUBLIC mimalloc)
+endif()
+
 
 add_dependencies(tscore ParseRules)
 target_include_directories(tscore PRIVATE

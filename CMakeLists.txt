@@ -250,12 +250,6 @@ if(TS_HAS_JEMALLOC AND TS_HAS_MIMALLOC)
     message(FATAL_ERROR "Cannot build with both jemalloc and mimalloc.")
 endif()
 
-if(TS_HAS_JEMALLOC)
-    link_libraries(jemalloc::jemalloc)
-elseif(TS_HAS_MIMALLOC)
-    link_libraries(mimalloc)
-endif()
-
 if(ENABLE_UNWIND)
     find_package(unwind)
     if(unwind_FOUND)
