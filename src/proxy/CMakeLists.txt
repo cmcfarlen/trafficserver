@@ -59,3 +59,6 @@ add_subdirectory(logging)
 if(TS_USE_QUIC)
   add_subdirectory(http3)
 endif()
+
+install(TARGETS proxy hdrs http http2 http_remap logging EXPORT proxy-targets)
+install(EXPORT proxy-targets DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/proxy)

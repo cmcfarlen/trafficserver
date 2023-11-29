@@ -1,0 +1,24 @@
+@PACKAGE_INIT@
+
+message(STATUS "included all the things")
+
+set_and_check(TS_LIBRARY_DIR "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
+set_and_check(TS_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+include(CMakeFindDependencyMacro)
+
+find_dependency(yaml-cpp)
+find_dependency(libswoc)
+
+include("${CMAKE_CURRENT_LIST_DIR}/../tsapicore/tsapicore-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../tscore/tscore-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../mgmt/mgmt-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../tsapibackend/tsapibackend-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../iocore/iocore-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../proxy/proxy-targets.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/../tsapi/tsapi-targets.cmake")
+
+set(TS_LIBRARIES tsapi tscore)
+
+check_required_components(tsapi)
+check_required_components(tscore)

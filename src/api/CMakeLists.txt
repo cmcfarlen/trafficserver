@@ -31,6 +31,7 @@ set(TSAPI_PUBLIC_HEADERS
 
 target_link_libraries(tsapi PRIVATE libswoc::libswoc yaml-cpp::yaml-cpp PCRE::PCRE OpenSSL::SSL)
 set_target_properties(tsapi PROPERTIES PUBLIC_HEADER "${TSAPI_PUBLIC_HEADERS}")
+target_include_directories(tsapi INTERFACE "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
 
 # Items common between api and other ts libraries
 add_library(
@@ -68,11 +69,45 @@ set(TSAPICORE_PUBLIC_HEADERS
 )
 add_library(tsapicore SHARED Assert.cc Metrics.cc DbgCtl.cc SourceLocation.cc ts_diags.cc)
 add_library(ts::tsapicore ALIAS tsapicore)
-set_target_properties(tsapicore PROPERTIES POSITION_INDEPENDENT_CODE TRUE PUBLIC_HEADER "${TSAPICORE_PUBLIC_HEADERS}")
-target_link_libraries(tsapicore PUBLIC libswoc)
+target_link_libraries(tsapicore PRIVATE ts::tscore libswoc::libswoc)
 
-install(TARGETS tsapi tsapibackend PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ts)
-install(TARGETS tsapicore PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/api)
+set(TSAPICORE_PUBLIC_HEADERS ${PROJECT_SOURCE_DIR}/include/api/Metrics.h
+                             ${PROJECT_SOURCE_DIR}/include/ts/DbgCtl.h # move this guy to include/api prolly
+)
+
+set_target_properties(tsapicore PROPERTIES POSITION_INDEPENDENT_CODE TRUE PUBLIC_HEADER "${TSAPICORE_PUBLIC_HEADERS}")
+
+install(
+  TARGETS tsapi
+  EXPORT tsapi-targets
+  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ts
+)
+install(
+  TARGETS tsapibackend
+  EXPORT tsapibackend-targets
+  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/ts
+)
+install(
+  TARGETS tsapicore
+  EXPORT tsapicore-targets
+  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/api
+)
+
+install(
+  EXPORT tsapi-targets
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tsapi
+  NAMESPACE ts::
+)
+install(
+  EXPORT tsapibackend-targets
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tsapibackend
+  NAMESPACE ts::
+)
+install(
+  EXPORT tsapicore-targets
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/tsapicore
+  NAMESPACE ts::
+)
 
 if(APPLE)
   target_link_options(tsapi PRIVATE -undefined dynamic_lookup)

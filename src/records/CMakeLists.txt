@@ -48,3 +48,6 @@ if(BUILD_TESTING)
   target_link_libraries(test_records_on_eventsystem PRIVATE records catch2::catch2 tscore libswoc::libswoc)
   add_test(NAME test_records_on_eventsystem COMMAND test_records_on_eventsystem)
 endif()
+
+install(TARGETS records EXPORT records-targets)
+install(EXPORT records-targets DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/records)

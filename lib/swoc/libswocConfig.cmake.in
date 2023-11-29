@@ -1,0 +1,13 @@
+@PACKAGE_INIT@
+
+message(STATUS "libswoc cmake config")
+
+set_and_check(libswoc_LIBRARY_DIR "@PACKAGE_CMAKE_INSTALL_LIBDIR@")
+set_and_check(libswoc_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+include(CMakeFindDependencyMacro)
+
+include("${CMAKE_CURRENT_LIST_DIR}/libswoc-targets.cmake")
+
+set(libswoc_LIBRARIES swoc)
+

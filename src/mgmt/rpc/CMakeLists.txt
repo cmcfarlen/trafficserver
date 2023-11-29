@@ -30,6 +30,9 @@ target_link_libraries(
   PRIVATE ts::tsapicore
 )
 
+install(TARGETS jsonrpc_protocol EXPORT mgmt-targets)
+install(EXPORT mgmt-targets DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/mgmt)
+
 add_library(
   jsonrpc_server STATIC server/RPCServer.cc server/CommBase.cc server/IPCSocketServer.cc config/JsonRPCConfig.cc
 )

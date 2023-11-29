@@ -18,11 +18,7 @@
 add_library(inkdns STATIC DNS.cc DNSConnection.cc DNSEventIO.cc Inline.cc SplitDNS.cc)
 add_library(ts::inkdns ALIAS inkdns)
 
-target_include_directories(
-  inkdns
-  PUBLIC "${PROJECT_SOURCE_DIR}/include"
-  PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
-)
+target_include_directories(inkdns PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_link_libraries(
   inkdns

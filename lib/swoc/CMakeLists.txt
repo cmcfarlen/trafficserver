@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.11)
 
-project(Lib-SWOC CXX)
 set(LIBSWOC_VERSION "1.5.5")
+project(Lib-SWOC VERSION ${LIBSWOC_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 cmake_policy(SET CMP0087 NEW)
 # override "lib64" to be "lib" unless the user explicitly sets it.
@@ -117,6 +117,24 @@ set_target_properties(
   libswoc-static PROPERTIES CLANG_FORMAT_DIRS "${PROJECT_SOURCE_DIR}/src;${PROJECT_SOURCE_DIR}/include"
 )
 
-install(TARGETS libswoc PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/swoc)
+install(TARGETS libswoc EXPORT libswoc-targets PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/swoc)
+install(EXPORT libswoc-targets NAMESPACE libswoc:: DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/libswoc")
+
+include(CMakePackageConfigHelpers)
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/libswocConfig.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/libswocConfig.cmake"
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/libswoc"
+  PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR
+  )
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/libswocConfigVersion.cmake"
+  COMPATIBILITY AnyNewerVersion
+  )
+install(FILES
+  "${CMAKE_CURRENT_BINARY_DIR}/libswocConfig.cmake"
+  "${CMAKE_CURRENT_BINARY_DIR}/libswocConfigVersion.cmake"
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/libswoc")
+
 
 add_library(libswoc::libswoc ALIAS libswoc)

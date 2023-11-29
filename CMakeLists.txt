@@ -723,6 +723,18 @@ install(CODE "set(OWNER_GROUP ${TS_PKGSYSGROUP})")
 install(CODE "set(CHOWN_DIRS ${CMAKE_INSTALL_LOGDIR} ${CMAKE_INSTALL_RUNSTATEDIR} ${CMAKE_INSTALL_CACHEDIR})")
 install(SCRIPT cmake/post_install.cmake)
 
+include(CMakePackageConfigHelpers)
+set(TS_LIB_INSTALL_DIR ${CMAKE_INSTALL_LIBDIR})
+configure_package_config_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/tsConfig.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/tsConfig.cmake"
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ts"
+  PATH_VARS CMAKE_INSTALL_INCLUDEDIR CMAKE_INSTALL_LIBDIR
+)
+write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/tsConfigVersion.cmake" COMPATIBILITY AnyNewerVersion)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/tsConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/tsConfigVersion.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ts"
+)
+
 # Display build summary
 include(CMakePrintHelpers)
 message(STATUS "Build Summary:")

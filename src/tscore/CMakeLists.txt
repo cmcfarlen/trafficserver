@@ -137,6 +137,13 @@ if(TS_HAS_128BIT_CAS AND TS_NEEDS_MCX16_FOR_CAS)
   target_compile_options(tscore PUBLIC "-mcx16")
 endif()
 
+install(TARGETS tscore EXPORT tscore-targets)
+install(
+  EXPORT tscore-targets
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/tscore"
+  NAMESPACE ts::
+)
+
 if(BUILD_TESTING)
   add_executable(
     test_tscore

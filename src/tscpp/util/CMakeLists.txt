@@ -36,7 +36,11 @@ set(TSCPPUTIL_PUBLIC_HEADERS
 )
 set_target_properties(tscpputil PROPERTIES PUBLIC_HEADER "${TSCPPUTIL_PUBLIC_HEADERS}")
 
-install(TARGETS tscpputil PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/tscpp/util)
+install(
+  TARGETS tscpputil
+  EXPORT tscore-targets
+  PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/tscpp/util
+)
 
 if(BUILD_TESTING)
   add_executable(

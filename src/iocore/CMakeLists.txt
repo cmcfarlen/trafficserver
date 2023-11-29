@@ -25,3 +25,16 @@ add_subdirectory(dns)
 add_subdirectory(hostdb)
 add_subdirectory(utils)
 add_subdirectory(cache)
+
+install(
+  TARGETS inknet
+          inkevent
+          inkcache
+          aio
+          inkutils
+          inkhostdb
+          inkdns
+          fastlz
+  EXPORT iocore-targets
+)
+install(EXPORT iocore-targets DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/iocore)
