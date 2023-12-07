@@ -17,6 +17,8 @@
 */
 #pragma once
 
+#include "cripts/Lulu.hpp"
+#include "cripts/Transaction.hpp"
 namespace Cript
 {
 class Context;
@@ -138,6 +140,8 @@ class Url
     {
       return _data.starts_with(prefix);
     }
+
+    friend struct fmt::formatter<Component>;
 
   protected:
     mutable Cript::StringViewWrapper _data;
@@ -524,6 +528,8 @@ public:
   Query query;
   Port port;
 
+  friend struct fmt::formatter<Component>;
+
 protected:
   void
   _initialize(Cript::Transaction *state)
@@ -651,109 +657,11 @@ private:
 // Formatters for {fmt}
 namespace fmt
 {
-template <> struct formatter<Url::Scheme> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Scheme &scheme, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", scheme.getSV());
-  }
-};
-
-template <> struct formatter<Url::Host> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Host &host, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", host.getSV());
-  }
-};
-
-template <> struct formatter<Url::Port> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Port &port, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", integer(port));
-  }
-};
-
-template <> struct formatter<Url::Path::String> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Path::String &path, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", path.getSV());
-  }
-};
-
-template <> struct formatter<Url::Path> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Path &path, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", path.getSV());
-  }
-};
-
-template <> struct formatter<Url::Query::Parameter> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Query::Parameter &param, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", param.getSV());
-  }
-};
-
-template <> struct formatter<Url::Query> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(Url::Query &query, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", query.getSV());
-  }
-};
-
+  template <typename T>
+    struct fmt::formatter<T, std::enable_if_t<std::is_base_of<Url::Component, T>::value, char>> :
+    fmt::formatter<std::string_view> {
+      auto format(Url::Component & a, format_context& ctx) const {
+        return fmt::formatter<std::string_view>::format(a.getSV(), ctx);
+      }
+    };
 } // namespace fmt

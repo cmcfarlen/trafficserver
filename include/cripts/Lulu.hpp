@@ -549,93 +549,94 @@ public:
 // Formatters for {fmt}
 namespace fmt
 {
-template <> struct formatter<Versions> {
+  template <typename T>
+    struct fmt::formatter<T, std::enable_if_t<std::is_base_of<Cript::StringViewMixin<T>, T>::value, char>> :
+    fmt::formatter<std::string_view> {
+      auto format(const Cript::StringViewMixin<T> & a, format_context& ctx) const {
+        return fmt::formatter<std::string_view>::format(a.getSV(), ctx);
+      }
+    };
+
+
+template<> struct formatter<Cript::string_view> {
   constexpr auto
   parse(format_parse_context &ctx) -> decltype(ctx.begin())
   {
     return ctx.begin();
   }
+  template <typename FormatContext>
+  auto
+  format(Cript::string_view &sv, FormatContext &ctx) -> decltype(ctx.out())
+  {
+    return format_to(ctx.out(), "{}", sv);
+  }
+};
 
+template<> struct formatter<integer> {
+  constexpr auto
+  parse(format_parse_context &ctx) -> decltype(ctx.begin())
+  {
+    return ctx.begin();
+  }
+  template <typename FormatContext>
+  auto
+  format(integer &i, FormatContext &ctx) -> decltype(ctx.out())
+  {
+    return format_to(ctx.out(), "{}", i);
+  }
+};
+
+template <> struct formatter<Versions> : public formatter<Cript::string_view> {
   template <typename FormatContext>
   auto
   format(Versions &version, FormatContext &ctx) -> decltype(ctx.out())
   {
-    return format_to(ctx.out(), "{}", version.getSV());
+    return formatter<Cript::string_view>::format(version.getSV(), ctx);
   }
 };
 
-template <> struct formatter<Versions::Major> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
+template <> struct formatter<Versions::Major> : public formatter<integer> {
   template <typename FormatContext>
   auto
   format(Versions::Major &major, FormatContext &ctx) -> decltype(ctx.out())
   {
-    return format_to(ctx.out(), "{}", integer(major));
+    return formatter<integer>::format(major, ctx);
   }
 };
 
-template <> struct formatter<Versions::Minor> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
+template <> struct formatter<Versions::Minor> : public formatter<integer> {
   template <typename FormatContext>
   auto
   format(Versions::Minor &minor, FormatContext &ctx) -> decltype(ctx.out())
   {
-    return format_to(ctx.out(), "{}", integer(minor));
+    return formatter<integer>::format(minor, ctx);
   }
 };
 
-template <> struct formatter<Versions::Patch> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
+template <> struct formatter<Versions::Patch> : public formatter<integer> {
   template <typename FormatContext>
   auto
   format(Versions::Patch &patch, FormatContext &ctx) -> decltype(ctx.out())
   {
-    return format_to(ctx.out(), "{}", integer(patch));
+    return formatter<integer>::format(patch, ctx);
   }
 };
 
-template <> struct formatter<TSHttpStatus> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
+template <> struct formatter<TSHttpStatus> : public formatter<integer>  {
   template <typename FormatContext>
   auto
   format(const TSHttpStatus &stat, FormatContext &ctx) -> decltype(ctx.out())
   {
-    return format_to(ctx.out(), "{}", static_cast<int>(stat));
+    return formatter<integer>::format(stat, ctx);
   }
 };
 
-template <> struct formatter<Cript::StringViewWrapper> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
+template <> struct formatter<Cript::StringViewWrapper>  : public formatter<Cript::string_view> {
   template <typename FormatContext>
   auto
   format(const Cript::StringViewWrapper &sv, FormatContext &ctx) -> decltype(ctx.out())
   {
-    return format_to(ctx.out(), "{}", sv.getSV());
+    return formatter<Cript::string_view>::format(sv.getSV(), ctx);
   }
 };
 
