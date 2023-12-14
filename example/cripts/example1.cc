@@ -216,7 +216,7 @@ do_remap()
   }
 
   // Testing Crypto SHA and encryption
-  auto hex = format("{}", Crypto::SHA256::encode("Hello World"));
+  auto hex = fmt::format("{}", Crypto::SHA256::encode("Hello World"));
 
   CDebug("SHA256 = {}", hex);
 

@@ -60,7 +60,6 @@
 #include <cripts/Plugins.hpp>
 
 // This is to make using these more convenient
-using fmt::format;
 using Cript::string;
 
 // This needs to be last
