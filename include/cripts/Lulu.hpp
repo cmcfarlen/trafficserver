@@ -26,7 +26,7 @@
 #include <charconv>
 #include <type_traits>
 
-#include <fmt/core.h>
+#include <format>
 
 #include "swoc/TextView.h"
 #include "ts/ts.h"
@@ -548,9 +548,9 @@ private:
 
   }; // End class Versions::Patch
 
-  friend struct fmt::formatter<Versions::Major>;
-  friend struct fmt::formatter<Versions::Minor>;
-  friend struct fmt::formatter<Versions::Patch>;
+  friend struct std::formatter<Versions::Major>;
+  friend struct std::formatter<Versions::Minor>;
+  friend struct std::formatter<Versions::Patch>;
 
   Cript::string_view _version;
 
@@ -560,9 +560,12 @@ public:
   Patch patch;
 }; // End class Versions
 
-// Formatters for {fmt}
-namespace fmt
+// Formatters for {std}
+namespace std
 {
+
+template <> struct formatter<swoc::TextView> : formatter<std::string_view> {};
+
 template <> struct formatter<Versions> {
   constexpr auto
   parse(format_parse_context &ctx) -> decltype(ctx.begin())
@@ -638,19 +641,7 @@ template <> struct formatter<TSHttpStatus> {
   }
 };
 
-template <> struct formatter<Cript::StringViewWrapper> {
-  constexpr auto
-  parse(format_parse_context &ctx) -> decltype(ctx.begin())
-  {
-    return ctx.begin();
-  }
-
-  template <typename FormatContext>
-  auto
-  format(const Cript::StringViewWrapper &sv, FormatContext &ctx) -> decltype(ctx.out())
-  {
-    return format_to(ctx.out(), "{}", sv.getSV());
-  }
+template <> struct formatter<Cript::StringViewWrapper> : formatter<std::string_view> {
 };
 
-} // namespace fmt
+} // namespace std

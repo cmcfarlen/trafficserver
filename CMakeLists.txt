@@ -241,13 +241,6 @@ check_include_file(arpa/inet.h HAVE_ARPA_INET_H)
 check_include_file(arpa/nameser.h HAVE_ARPA_NAMESER_H)
 check_include_file(arpa/nameser_compat.h HAVE_ARPA_NAMESER_COMPAT_H)
 
-# Find libraries
-if(ENABLE_CRIPTS)
-  # needed for cripts
-  # however this might become a general requirement
-  find_package(fmt 8.1 REQUIRED)
-endif()
-
 find_package(Backtrace)
 if(Backtrace_FOUND)
   set(TS_HAS_BACKTRACE TRUE)

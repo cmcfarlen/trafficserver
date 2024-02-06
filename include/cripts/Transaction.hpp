@@ -25,7 +25,7 @@
 #include <chrono>
 #include <climits>
 
-#include <fmt/core.h>
+#include <format>
 
 #include "ts/ts.h"
 #include "ts/remap.h"

@@ -25,7 +25,7 @@
 #include <chrono>
 #include <climits>
 
-#include <fmt/core.h>
+#include <format>
 
 #include "ts/ts.h"
 #include "ts/remap.h"
@@ -60,7 +60,7 @@
 #include "cripts/Plugins.hpp"
 
 // This is to make using these more convenient
-using fmt::format;
+using std::format;
 using Cript::string;
 
 // This needs to be last

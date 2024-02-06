@@ -387,7 +387,7 @@ public:
 } // namespace Server
 
 // Formatters for {fmt}
-namespace fmt
+namespace std
 {
 template <> struct formatter<Cript::IP> {
   constexpr auto
@@ -403,4 +403,4 @@ template <> struct formatter<Cript::IP> {
     return format_to(ctx.out(), "{}", ip.getSV());
   }
 };
-} // namespace fmt
+} // namespace std

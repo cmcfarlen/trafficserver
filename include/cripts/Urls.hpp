@@ -279,7 +279,7 @@ public:
     }; // End class Url::Path::String
 
   public:
-    friend struct fmt::formatter<Path::String>;
+    friend struct std::formatter<Path::String>;
 
     Path() = default;
 
@@ -408,7 +408,7 @@ public:
     }; // End class Url::Query::Parameter
 
   public:
-    friend struct fmt::formatter<Query::Parameter>;
+    friend struct std::formatter<Query::Parameter>;
 
     Query() = default;
 
@@ -649,8 +649,8 @@ private:
 
 } // namespace Parent
 
-// Formatters for {fmt}
-namespace fmt
+// Formatters for {std}
+namespace std
 {
 template <> struct formatter<Url::Scheme> {
   constexpr auto
@@ -757,4 +757,4 @@ template <> struct formatter<Url::Query> {
   }
 };
 
-} // namespace fmt
+} // namespace std

@@ -562,7 +562,7 @@ class Context;
 } // namespace Cript
 
 // Formatters for {fmt}
-namespace fmt
+namespace std
 {
 template <> struct formatter<Header::Method> {
   constexpr auto
@@ -609,4 +609,4 @@ template <> struct formatter<Header::Name> {
   }
 };
 
-} // namespace fmt
+} // namespace std

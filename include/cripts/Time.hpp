@@ -125,7 +125,7 @@ public:
 } // namespace Time
 
 // Formatters for {fmt}
-namespace fmt
+namespace std
 {
 template <> struct formatter<Time::Local> {
   constexpr auto
@@ -141,4 +141,4 @@ template <> struct formatter<Time::Local> {
     return format_to(ctx.out(), "{}", time.epoch());
   }
 };
-} // namespace fmt
+} // namespace std

@@ -24,11 +24,6 @@ foreach(EXA ${CRIPTS_EXAMPLES})
   target_link_libraries(cripts_${EXA} PRIVATE ts::cripts)
 endforeach()
 
-# This is a hack, but useful to run clang-tidy across all of Cripts
-# Todo: why is this not working??
-#find_package(fmt 8.1 REQUIRED)
-#$<TARGET_PROPERTY:fmt::fmt,INCLUDE_DIRECTORIES>
-
 set(cript-includes -I${CMAKE_SOURCE_DIR}/include -I${CMAKE_SOURCE_DIR}/lib/swoc/include -I${CMAKE_BINARY_DIR}/include
                    -I${OPENSSL_INCLUDE_DIR} -I/opt/homebrew/include -I/usr/local/include
 )

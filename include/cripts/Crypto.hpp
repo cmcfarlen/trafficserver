@@ -251,7 +251,7 @@ namespace HMAC
 } // namespace Crypto
 
 // Formatters for {fmt}
-namespace fmt
+namespace std
 {
 template <> struct formatter<Crypto::SHA256> {
   constexpr auto
@@ -298,4 +298,4 @@ template <> struct formatter<Crypto::AES256> {
   }
 };
 
-} // namespace fmt
+} // namespace std

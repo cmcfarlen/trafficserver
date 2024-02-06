@@ -103,10 +103,10 @@ public:
 
   template <typename... T>
   void
-  debug(fmt::format_string<T...> fmt, T &&...args) const
+  debug(std::format_string<T...> fmt, T &&...args) const
   {
     if (debugOn()) {
-      auto str = fmt::vformat(fmt, fmt::make_format_args(args...));
+      auto str = std::vformat(fmt, std::make_format_args(args...));
 
       Dbg(dbg_ctl_cript, "%s", str.c_str());
     }
