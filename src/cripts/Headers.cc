@@ -16,6 +16,7 @@
   limitations under the License.
 */
 
+#include "cripts/Instance.hpp"
 #include "cripts/Lulu.hpp"
 #include "cripts/Preamble.hpp"
 

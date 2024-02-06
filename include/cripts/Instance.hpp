@@ -29,6 +29,9 @@
 #include "cripts/Transaction.hpp"
 #include "cripts/Bundle.hpp"
 
+#include <utility>
+#include <format>
+
 namespace Cript
 {
 
@@ -103,10 +106,10 @@ public:
 
   template <typename... T>
   void
-  debug(std::format_string<T...> fmt, T &&...args) const
+  debug(std::format_string<T...>&& fmt, T &&...args) const
   {
     if (debugOn()) {
-      auto str = std::vformat(fmt, std::make_format_args(args...));
+      auto str = std::format(fmt, std::forward<T>(args)...);
 
       Dbg(dbg_ctl_cript, "%s", str.c_str());
     }

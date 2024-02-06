@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include "ts/apidefs.h"
 namespace tsapi
 {
 namespace c

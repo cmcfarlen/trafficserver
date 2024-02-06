@@ -20,6 +20,9 @@
 // This is not awesome, but these APIs are internal to ATS. Once Cripts becomes
 // part of the ATS core, we can remove this.
 
+#include "cripts/Lulu.hpp"
+#include <vector>
+
 class RemapPluginInst; // Opaque to the Cripts, but needed in the implementation.
 
 namespace Plugin

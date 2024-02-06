@@ -45,7 +45,7 @@ integer integer_helper(std::string_view sv);
 namespace Cript
 {
 // Use Cript::string_view consistently, so that it's a one-stop shop for all string_view needs.
-using string_view = swoc::TextView;
+using string_view = std::string_view;
 
 namespace details
 {
@@ -564,8 +564,6 @@ public:
 namespace std
 {
 
-template <> struct formatter<swoc::TextView> : formatter<std::string_view> {};
-
 template <> struct formatter<Versions> {
   constexpr auto
   parse(format_parse_context &ctx) -> decltype(ctx.begin())
@@ -641,7 +639,16 @@ template <> struct formatter<TSHttpStatus> {
   }
 };
 
-template <> struct formatter<Cript::StringViewWrapper> : formatter<std::string_view> {
-};
+template<class T>
+concept DerivedStringView = !std::is_same<std::string_view,T>::value && std::is_base_of<std::string_view, T>::value;
+
+template<DerivedStringView T>
+struct formatter<T> : formatter<std::string_view> {};
+
+template<class T>
+concept DerivedString= !std::is_same<std::string,T>::value && std::is_base_of<std::string, T>::value;
+
+template<DerivedString T>
+struct formatter<T> : formatter<std::string> {};
 
 } // namespace std
