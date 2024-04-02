@@ -21,12 +21,13 @@
   limitations under the License.
  */
 
+#include <memory>
 #include "iocore/net/SSLAPIHooks.h"
 
-SSLAPIHooks *g_ssl_hooks = nullptr;
-
-void
-init_global_ssl_hooks()
+SSLAPIHooks *
+g_ssl_hooks()
 {
-  g_ssl_hooks = new SSLAPIHooks;
+  static std::unique_ptr<SSLAPIHooks> phooks = std::make_unique<SSLAPIHooks>();
+
+  return phooks.get();
 }
