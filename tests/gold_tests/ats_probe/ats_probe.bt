@@ -28,8 +28,8 @@ BEGIN
   @readlines = 0;
 }
 
-usdt:*:new_origin_server_connection
+usdt:*:new_session
 {
-  printf("new_origin_server_connection: %s\n", str(arg0));
+  printf("new_session: %d\n", arg0);
   @readlines++;
 }

@@ -289,6 +289,8 @@ HttpSM::init(bool from_early_data)
   sm_id                 = next_sm_id++;
   t_state.state_machine = this;
 
+  ATS_PROBE1(new_session, sm_id);
+
   t_state.http_config_param = HttpConfig::acquire();
   // Acquire a lease on the global remap / rewrite table (stupid global name ...)
   m_remap = rewrite_table->acquire();
