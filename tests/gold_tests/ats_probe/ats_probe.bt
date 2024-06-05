@@ -33,3 +33,10 @@ usdt:*:new_session
   printf("new_session: %d\n", arg0);
   @readlines++;
 }
+
+usdt:*:start_connection_with_ip
+{
+  printf("new_session: %s\n", str(arg0));
+  @connections[str(arg0)] = count();
+}
+

@@ -22,6 +22,7 @@
 
  */
 
+#include "tscore/ink_inet.h"
 #include "tsutil/ts_bw_format.h"
 #include "proxy/ProxyTransaction.h"
 #include "proxy/http/HttpSM.h"
@@ -417,6 +418,10 @@ HttpSM::attach_client_session(ProxyTransaction *txn)
   ats_ip_copy(&t_state.client_info.dst_addr, netvc->get_local_addr());
   t_state.client_info.is_transparent = netvc->get_is_transparent();
   t_state.client_info.port_attribute = static_cast<HttpProxyPort::TransportType>(netvc->attributes);
+
+  ip_text_buffer ipb;
+  const char    *ip = ats_ip_ntop(t_state.client_info.dst_addr, ipb, sizeof(ipb));
+  ATS_PROBE1(start_connection_with_ip, ip);
 
   // Record api hook set state
   hooks_set = txn->has_hooks();
