@@ -190,7 +190,7 @@ const char *ats_ip_ntop(const struct sockaddr *addr, char *dst, size_t size);
 /// Size in bytes of an port and IPv4/IPv6 address.
 static constexpr size_t TS_IP4_SIZE  = sizeof(in_addr_t); ///< 4
 static constexpr size_t TS_IP6_SIZE  = sizeof(in6_addr);  ///< 16
-static constexpr size_t TS_UNIX_SIZE  = sizeof(sockaddr_un::sun_path);
+static constexpr size_t TS_UNIX_SIZE = sizeof(sockaddr_un::sun_path);
 static constexpr size_t TS_PORT_SIZE = sizeof(in_port_t); ///< 2
 
 /// Reset an address to invalid.
@@ -441,20 +441,20 @@ ats_ip6_cast(sockaddr const &a)
 inline sockaddr_un *
 ats_unix_cast(sockaddr *a)
 {
-  return static_cast<sockaddr_un*>(static_cast<void*>(a));
+  return static_cast<sockaddr_un *>(static_cast<void *>(a));
 }
 inline sockaddr_un const *
 ats_unix_cast(sockaddr const *a)
 {
-  return static_cast<sockaddr_un const*>(static_cast<void const*>(a));
+  return static_cast<sockaddr_un const *>(static_cast<void const *>(a));
 }
-inline sockaddr_un&
-ats_unix_cast(sockaddr& a)
+inline sockaddr_un &
+ats_unix_cast(sockaddr &a)
 {
   return *static_cast<sockaddr_un *>(static_cast<void *>(&a));
 }
 inline sockaddr_un const &
-ats_unix_cast(sockaddr const & a)
+ats_unix_cast(sockaddr const &a)
 {
   return *static_cast<sockaddr_un const *>(static_cast<void const *>(&a));
 }
@@ -464,26 +464,38 @@ inline size_t
 ats_ip_size(sockaddr const *addr ///< Address object.
 )
 {
-  return AF_INET == addr->sa_family ? sizeof(sockaddr_in) : AF_INET6 == addr->sa_family ? sizeof(sockaddr_in6) : AF_UNIX == addr->sa_family ? sizeof(sockaddr_un) : 0;
+  return AF_INET == addr->sa_family  ? sizeof(sockaddr_in) :
+         AF_INET6 == addr->sa_family ? sizeof(sockaddr_in6) :
+         AF_UNIX == addr->sa_family  ? sizeof(sockaddr_un) :
+                                       0;
 }
 inline size_t
 ats_ip_size(IpEndpoint const *addr ///< Address object.
 )
 {
-  return AF_INET == addr->sa.sa_family ? sizeof(sockaddr_in) : AF_INET6 == addr->sa.sa_family ? sizeof(sockaddr_in6) : AF_UNIX == addr->sa.sa_family ? sizeof(sockaddr_un) : 0;
+  return AF_INET == addr->sa.sa_family  ? sizeof(sockaddr_in) :
+         AF_INET6 == addr->sa.sa_family ? sizeof(sockaddr_in6) :
+         AF_UNIX == addr->sa.sa_family  ? sizeof(sockaddr_un) :
+                                          0;
 }
 /// @return The size of the IP address only.
 inline size_t
 ats_ip_addr_size(sockaddr const *addr ///< Address object.
 )
 {
-  return AF_INET == addr->sa_family ? sizeof(in_addr_t) : AF_INET6 == addr->sa_family ? sizeof(in6_addr) : AF_UNIX == addr->sa_family ? sizeof(sockaddr_un::sun_path) : 0;
+  return AF_INET == addr->sa_family  ? sizeof(in_addr_t) :
+         AF_INET6 == addr->sa_family ? sizeof(in6_addr) :
+         AF_UNIX == addr->sa_family  ? sizeof(sockaddr_un::sun_path) :
+                                       0;
 }
 inline size_t
 ats_ip_addr_size(IpEndpoint const *addr ///< Address object.
 )
 {
-  return AF_INET == addr->sa.sa_family ? sizeof(in_addr_t) : AF_INET6 == addr->sa.sa_family ? sizeof(in6_addr) :  AF_UNIX == addr->sa.sa_family ? sizeof(sockaddr_un::sun_path) : 0;
+  return AF_INET == addr->sa.sa_family  ? sizeof(in_addr_t) :
+         AF_INET6 == addr->sa.sa_family ? sizeof(in6_addr) :
+         AF_UNIX == addr->sa.sa_family  ? sizeof(sockaddr_un::sun_path) :
+                                          0;
 }
 
 /** Get a reference to the port in an address.
@@ -1556,27 +1568,14 @@ IpAddr::hash() const
 struct UnAddr {
   using self = UnAddr;
 
-  UnAddr() {
-    _path[0] = 0;
-  }
+  UnAddr() { _path[0] = 0; }
 
-  UnAddr(self const &addr)
-  {
-    strncpy(_path, addr._path, TS_UNIX_SIZE);
-  }
-  explicit constexpr UnAddr(const char* path) {
-    strncpy(_path, path, TS_UNIX_SIZE);
-  }
-  explicit constexpr UnAddr(const std::string& path) {
-    strncpy(_path, path.c_str(), TS_UNIX_SIZE);
-  }
+  UnAddr(self const &addr) { strncpy(_path, addr._path, TS_UNIX_SIZE); }
+  explicit constexpr UnAddr(const char *path) { strncpy(_path, path, TS_UNIX_SIZE); }
+  explicit constexpr UnAddr(const std::string &path) { strncpy(_path, path.c_str(), TS_UNIX_SIZE); }
 
-  explicit constexpr UnAddr(sockaddr const* addr) {
-    this->assign(addr);
-  }
-  explicit constexpr UnAddr(sockaddr_un const *addr) {
-    this->assign(ats_ip_sa_cast(addr));
-  }
+  explicit constexpr UnAddr(sockaddr const *addr) { this->assign(addr); }
+  explicit constexpr UnAddr(sockaddr_un const *addr) { this->assign(ats_ip_sa_cast(addr)); }
   /// Construct from @c IpEndpoint.
   explicit UnAddr(IpEndpoint const &addr) { this->assign(&addr.sa); }
   /// Construct from @c IpEndpoint.
@@ -1584,7 +1583,9 @@ struct UnAddr {
   /// Assign sockaddr storage.
   self &assign(sockaddr const *addr);
 
-  uint16_t family() const {
+  uint16_t
+  family() const
+  {
     return AF_UNIX;
   }
 
@@ -1605,7 +1606,8 @@ struct UnAddr {
 };
 
 inline UnAddr &
-UnAddr::assign(sockaddr const *addr) {
+UnAddr::assign(sockaddr const *addr)
+{
   if (addr) {
     strncpy(_path, ats_unix_cast(addr)->sun_path, TS_UNIX_SIZE);
   }
@@ -1648,7 +1650,8 @@ IpEndpoint::assign(sockaddr const *ip)
 }
 
 inline IpEndpoint &
-IpEndpoint::assign(UnAddr const &addr) {
+IpEndpoint::assign(UnAddr const &addr)
+{
   sa.sa_family = AF_UNIX;
   strncpy(ats_unix_cast(&sa)->sun_path, addr._path, TS_UNIX_SIZE);
   return *this;

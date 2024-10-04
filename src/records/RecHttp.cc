@@ -375,10 +375,10 @@ HttpProxyPort::processOptions(const char *opts)
 
   for (auto item : values) {
     if (item[0] == '/') {
-      m_family = AF_UNIX;
+      m_family    = AF_UNIX;
       m_unix_path = UnAddr(item);
-      af_set_p = true;
-      zret = true;
+      af_set_p    = true;
+      zret        = true;
     } else if (isdigit(item[0])) { // leading digit -> port value
       char *ptr;
       int   port = strtoul(item, &ptr, 10);
