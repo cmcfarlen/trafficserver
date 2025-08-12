@@ -89,6 +89,7 @@ main([[maybe_unused]] int argc, const char **argv)
   auto &plugin_command     = parser.add_command("plugin", "Interact with plugins").require_commands();
   auto &host_command       = parser.add_command("host", "Interact with host status").require_commands();
   auto &direct_rpc_command = parser.add_command("rpc", "Interact with the rpc api").require_commands();
+  auto &remap_command      = parser.add_command("remap", "Search/manage remap rules").require_commands();
 
   // config commands
   config_command.add_command("defaults", "Show default information configuration values", [&]() { command->execute(); })
@@ -210,6 +211,8 @@ main([[maybe_unused]] int argc, const char **argv)
     .add_option("--params", "-p", "Parameters to be passed in the request, YAML or JSON format", "", MORE_THAN_ONE_ARG_N, "", "")
     .add_example_usage("traffic_ctl rpc invoke foo_bar -p \"numbers: [1, 2, 3]\"");
 
+  remap_command.add_command("search", "Search remap rules", "", MORE_THAN_ONE_ARG_N, [&]() { command->execute(); });
+
   try {
     // for now we only care about SIGINT(SIGQUIT, ... ?)
     signal_register_handler(SIGINT, handle_signal);
@@ -231,6 +234,8 @@ main([[maybe_unused]] int argc, const char **argv)
       command = std::make_shared<ServerCommand>(&args);
     } else if (args.get("storage")) {
       command = std::make_shared<StorageCommand>(&args);
+    } else if (args.get("remap")) {
+      command = std::make_shared<RemapCommand>(&args);
     } else if (args.get("plugin")) {
       command = std::make_shared<PluginCommand>(&args);
     } else if (args.get("host")) {

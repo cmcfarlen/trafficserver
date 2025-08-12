@@ -46,6 +46,7 @@ add_library(
   handlers/storage/Storage.cc
   handlers/server/Server.cc
   handlers/plugins/Plugins.cc
+  handlers/remap/Search.cc
 )
 add_library(ts::rpcpublichandlers ALIAS rpcpublichandlers)
 

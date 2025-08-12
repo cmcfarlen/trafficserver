@@ -232,6 +232,77 @@ public:
   PluginFactory           pluginFactory;
   NextHopStrategyFactory *strategyFactory = nullptr;
 
+  class iterator
+  {
+  public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type        = std::tuple<std::string_view, int, std::string_view>;
+    using difference_type   = ptrdiff_t;
+    using pointer           = value_type *;
+    using reference         = value_type &;
+
+    iterator(URLTable::iterator it) : _it(it) {}
+
+    iterator &
+    operator++()
+    {
+      next();
+
+      return *this;
+    }
+
+    iterator
+    operator++(int)
+    {
+      iterator result = *this;
+
+      next();
+
+      return result;
+    }
+
+    value_type
+    operator*() const
+    {
+      std::string_view name;
+
+      return std::make_tuple(name, 0, "foo");
+    }
+
+    bool
+    operator==(const iterator &o) const
+    {
+      return _it == o._it;
+    }
+
+    bool
+    operator!=(const iterator &o) const
+    {
+      return _it != o._it;
+    }
+
+  private:
+    void
+    next()
+    {
+      ++_it;
+    }
+
+    URLTable::iterator _it;
+  };
+
+  iterator
+  begin()
+  {
+    return iterator(forward_mappings.hash_lookup->begin());
+  }
+
+  iterator
+  end()
+  {
+    return iterator(forward_mappings.hash_lookup->end());
+  }
+
 private:
   bool              _valid               = false;
   ACLBehaviorPolicy _acl_behavior_policy = ACLBehaviorPolicy::ACL_BEHAVIOR_LEGACY;

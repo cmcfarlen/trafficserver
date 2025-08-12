@@ -671,3 +671,59 @@ StorageCommand::set_storage_offline()
   _printer->write_output(response);
 }
 //------------------------------------------------------------------------------------------------------------------------------------
+struct SearchRemapRequest : shared::rpc::ClientRequest {
+  using super = shared::rpc::ClientRequest;
+
+  struct Params {
+    std::vector<std::string> names;
+  };
+  SearchRemapRequest(const Params &p);
+
+  std::string
+  get_method() const override
+  {
+    return "admin_remap_search";
+  }
+};
+template <> struct YAML::convert<SearchRemapRequest::Params> {
+  static Node
+  encode(SearchRemapRequest::Params const &)
+  {
+    Node node;
+    node["authority"] = "foobar";
+    return node;
+  }
+};
+class SearchRemapResponsePrinter : public BasePrinter
+{
+  void write_output(YAML::Node const &result) override;
+
+public:
+  SearchRemapResponsePrinter(BasePrinter::Options opt) : BasePrinter(opt) {}
+};
+
+SearchRemapRequest::SearchRemapRequest(const Params &p)
+{
+  super::params = p;
+}
+
+RemapCommand::RemapCommand(ts::Arguments *args) : CtrlCommand(args)
+{
+  BasePrinter::Options printOpts{parse_print_opts(args)};
+  _printer      = std::make_unique<SearchRemapResponsePrinter>(printOpts);
+  _invoked_func = [&]() { remap_get(); };
+}
+
+void
+RemapCommand::remap_get()
+{
+  SearchRemapRequest request{{}};
+  auto               response = invoke_rpc(request);
+  _printer->write_output(response);
+}
+
+void
+SearchRemapResponsePrinter::write_output(YAML::Node const &)
+{
+  printf("Whoa!\n");
+}

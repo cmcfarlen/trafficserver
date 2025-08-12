@@ -26,6 +26,7 @@
 #include "mgmt/rpc/handlers/storage/Storage.h"
 #include "mgmt/rpc/handlers/server/Server.h"
 #include "mgmt/rpc/handlers/plugins/Plugins.h"
+#include "mgmt/rpc/handlers/remap/Remap.h"
 
 #include "RpcAdminPubHandlers.h"
 namespace rpc::admin
@@ -65,5 +66,8 @@ register_admin_jsonrpc_handlers()
                           {{rpc::RESTRICTED_API}});
   rpc::add_method_handler("admin_storage_get_device_status", &get_storage_status, &core_ats_rpc_service_provider_handle,
                           {{rpc::NON_RESTRICTED_API}});
+
+  using namespace rpc::handlers::remap;
+  rpc::add_method_handler("admin_remap_search", &remap_search, &core_ats_rpc_service_provider_handle, {{rpc::RESTRICTED_API}});
 }
 } // namespace rpc::admin

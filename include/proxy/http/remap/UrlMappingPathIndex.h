@@ -33,15 +33,14 @@
 class UrlMappingPathIndex
 {
 public:
+  using UrlMappingTrie = Trie<url_mapping>;
+
   UrlMappingPathIndex() {}
   virtual ~UrlMappingPathIndex();
   bool         Insert(url_mapping *mapping);
   url_mapping *Search(URL *request_url, int request_port, bool normal_search = true) const;
   void         Print() const;
   std::string  PrintUrlMappingPathIndex() const;
-
-private:
-  using UrlMappingTrie = Trie<url_mapping>;
 
   struct UrlMappingTrieKey {
     int scheme_wks_idx;
@@ -59,6 +58,93 @@ private:
   };
 
   using UrlMappingGroup = std::map<UrlMappingTrieKey, UrlMappingTrie *>;
+
+  class iterator
+  {
+  public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type        = UrlMappingTrie::const_iterator::value_type;
+    using difference_type   = ptrdiff_t;
+    using pointer           = value_type *;
+    using reference         = value_type &;
+
+    iterator(UrlMappingGroup::const_iterator b, UrlMappingGroup::const_iterator e) : _it(b), _it_end(e)
+    {
+      if (b != e) {
+        _tit     = _it->second->begin();
+        _tit_end = _it->second->end();
+      }
+    }
+
+    iterator &
+    operator++()
+    {
+      next();
+
+      return *this;
+    }
+
+    iterator
+    operator++(int)
+    {
+      iterator result = *this;
+
+      next();
+
+      return result;
+    }
+
+    reference
+    operator*()
+    {
+      return *_tit;
+    }
+
+    bool
+    operator==(const iterator &o) const
+    {
+      return _it == o._it;
+    }
+
+    bool
+    operator!=(const iterator &o) const
+    {
+      return _it != o._it;
+    }
+
+  private:
+    void
+    next()
+    {
+      ++_tit;
+      if (_tit == _tit_end) {
+        if (_it != _it_end) {
+          ++_it;
+          _tit     = _it->second->begin();
+          _tit_end = _it->second->end();
+        }
+      }
+    }
+
+    UrlMappingGroup::const_iterator _it{};
+    UrlMappingGroup::const_iterator _it_end{};
+    UrlMappingTrie::const_iterator  _tit{};
+    UrlMappingTrie::const_iterator  _tit_end{};
+  };
+
+  iterator
+  begin() const
+  {
+    return iterator(m_tries.begin(), m_tries.end());
+  }
+
+  iterator
+  end() const
+  {
+    return iterator(m_tries.end(), m_tries.end());
+  }
+
+private:
   UrlMappingGroup m_tries;
 
   // make copy-constructor and assignment operator private

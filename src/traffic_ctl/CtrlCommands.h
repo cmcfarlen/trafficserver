@@ -244,5 +244,14 @@ private:
   void set_storage_offline();
 };
 // -----------------------------------------------------------------------------------------------------------------------------------
+struct RemapCommand : public CtrlCommand {
+  RemapCommand(ts::Arguments *args);
+
+private:
+  static inline const std::string FETCH_STR{"get"};
+
+  void remap_get();
+};
+// -----------------------------------------------------------------------------------------------------------------------------------
 
 BasePrinter::Options::FormatFlags parse_print_opts(ts::Arguments *args);
