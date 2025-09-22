@@ -1032,8 +1032,25 @@ lFail:
   return false;
 }
 
+bool remap_parse_config_bti(std::string &content, BUILD_TABLE_INFO *bti, const char *path);
+
 bool
 remap_parse_config_bti(const char *path, BUILD_TABLE_INFO *bti)
+{
+  std::error_code ec;
+  std::string     content{swoc::file::load(swoc::file::path{path}, ec)};
+  if (ec.value() == ENOENT) { // a missing file is ok - treat as empty, no rules.
+    return true;
+  }
+  if (ec.value()) {
+    Warning("Failed to open remapping configuration file %s - %s", path, strerror(ec.value()));
+    return false;
+  }
+  return remap_parse_config_bti(content, bti, path);
+}
+
+bool
+remap_parse_config_bti(std::string &content, BUILD_TABLE_INFO *bti, const char *path)
 {
   char        errBuf[1024];
   char        errStrBuf[1024];
@@ -1065,16 +1082,6 @@ remap_parse_config_bti(const char *path, BUILD_TABLE_INFO *bti)
   UrlRewrite::RegexMapping *reg_map;
   bool                      is_cur_mapping_regex;
   const char               *type_id_str;
-
-  std::error_code ec;
-  std::string     content{swoc::file::load(swoc::file::path{path}, ec)};
-  if (ec.value() == ENOENT) { // a missing file is ok - treat as empty, no rules.
-    return true;
-  }
-  if (ec.value()) {
-    Warning("Failed to open remapping configuration file %s - %s", path, strerror(ec.value()));
-    return false;
-  }
 
   Dbg(dbg_ctl_url_rewrite, "[BuildTable] UrlRewrite::BuildTable()");
 
@@ -1496,6 +1503,27 @@ remap_parse_config(const char *path, UrlRewrite *rewrite)
 
   bti.rewrite = rewrite;
   bool status = remap_parse_config_bti(path, &bti);
+
+  /* Now after we parsed the configuration and (re)loaded plugins and plugin instances
+   * accordingly notify all plugins that we are done */
+  rewrite->pluginFactory.indicatePostReload(status);
+
+  bti.clear_acl_rules_list();
+
+  return status;
+}
+
+bool
+remap_parse_config_content(std::string &content, UrlRewrite *rewrite, const char *context)
+{
+  BUILD_TABLE_INFO bti;
+
+  /* If this happens to be a config reload, the list of loaded remap plugins is non-empty, and we
+   * can signal all these plugins that a reload has begun. */
+  rewrite->pluginFactory.indicatePreReload();
+
+  bti.rewrite = rewrite;
+  bool status = remap_parse_config_bti(content, &bti, context);
 
   /* Now after we parsed the configuration and (re)loaded plugins and plugin instances
    * accordingly notify all plugins that we are done */

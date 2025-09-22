@@ -25,9 +25,11 @@
 #include "proxy/http/remap/UrlRewrite.h"
 #include "iocore/eventsystem/ConfigProcessor.h"
 #include "proxy/ReverseProxy.h"
+#include "proxy/http/remap/RemapConfig.h"
 #include "tscore/Layout.h"
 #include "tscore/Filenames.h"
 #include "proxy/http/HttpSM.h"
+#include <functional>
 
 #define modulePrefix "[ReverseProxy]"
 
@@ -797,14 +799,8 @@ UrlRewrite::InsertForwardMapping(mapping_type maptype, url_mapping *mapping, con
   return success;
 }
 
-/**
-  Reads the configuration file and creates a new hash table.
-
-  @return zero on success and non-zero on failure.
-
-*/
 int
-UrlRewrite::BuildTable(const char *path)
+UrlRewrite::_buildTable(const std::function<bool(UrlRewrite *)> &f)
 {
   ink_assert(forward_mappings.empty());
   ink_assert(reverse_mappings.empty());
@@ -823,7 +819,7 @@ UrlRewrite::BuildTable(const char *path)
   temporary_redirects.hash_lookup.reset(new URLTable);
   forward_mappings_with_recv_port.hash_lookup.reset(new URLTable);
 
-  if (!remap_parse_config(path, this)) {
+  if (!f(this)) {
     return TS_ERROR;
   }
 
@@ -853,6 +849,24 @@ UrlRewrite::BuildTable(const char *path)
   }
 
   return TS_SUCCESS;
+}
+
+/**
+  Reads the configuration file and creates a new hash table.
+
+  @return zero on success and non-zero on failure.
+
+*/
+int
+UrlRewrite::BuildTable(const char *path)
+{
+  return _buildTable([path](UrlRewrite *p) { return remap_parse_config(path, p); });
+}
+
+int
+UrlRewrite::BuildTableFromString(std::string &content)
+{
+  return _buildTable([&content](UrlRewrite *p) { return remap_parse_config_content(content, p, "literal"); });
 }
 
 /**

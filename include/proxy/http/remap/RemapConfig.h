@@ -88,6 +88,7 @@ unsigned long remap_check_option(const char *const *argv, int argc, unsigned lon
                                  const char **argptr = nullptr);
 
 bool remap_parse_config(const char *path, UrlRewrite *rewrite);
+bool remap_parse_config_content(std::string &content, UrlRewrite *rewrite, const char *context);
 
 using load_remap_file_func = void (*)(const char *, const char *);
 

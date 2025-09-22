@@ -225,3 +225,32 @@ map_with_recv_port http://front.example.com \
     }
   }
 }
+
+SCENARIO("Using header rewrite iterators", "[proxy][remap][iterator]")
+{
+  GIVEN("URLMapping")
+  {
+    std::unique_ptr<UrlRewrite> urlrw = std::make_unique<UrlRewrite>();
+
+    std::string config = R"RMCFG(
+map http://front.example.com \
+    http://origin.example.com
+  )RMCFG";
+
+    int rc = urlrw->BuildTableFromString(config);
+
+    THEN("iterators can enumerate entries")
+    {
+      REQUIRE(rc == TS_SUCCESS);
+      REQUIRE(urlrw->rule_count() == 1);
+
+      auto it  = urlrw->begin();
+      auto end = urlrw->end();
+
+      REQUIRE(it != end);
+      REQUIRE(std::get<0>(*it) == "front.example.com");
+      ++it;
+      REQUIRE(it == end);
+    }
+  }
+}

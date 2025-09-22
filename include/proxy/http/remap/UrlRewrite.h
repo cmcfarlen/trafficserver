@@ -85,6 +85,7 @@ public:
    * @return 0 on success, non-zero error code on failure.
    */
   int BuildTable(const char *path);
+  int BuildTableFromString(std::string &content);
 
   mapping_type Remap_redirect(HTTPHdr *request_header, URL *redirect_url);
   bool         ReverseMap(HTTPHdr *response_header);
@@ -236,12 +237,18 @@ public:
   {
   public:
     using iterator_category = std::input_iterator_tag;
-    using value_type        = std::tuple<std::string_view, int, std::string_view>;
+    using value_type        = std::tuple<std::string, int, url_mapping>;
     using difference_type   = ptrdiff_t;
     using pointer           = value_type *;
     using reference         = value_type &;
 
-    iterator(URLTable::iterator it) : _it(it) {}
+    iterator(URLTable::iterator b, URLTable::iterator e) : _table_it(b), _table_end(e), _idx_it{}, _idx_end{}
+    {
+      if (b != e) {
+        _idx_it  = (*b).second->begin();
+        _idx_end = (*b).second->end();
+      }
+    }
 
     iterator &
     operator++()
@@ -262,45 +269,45 @@ public:
     }
 
     value_type
-    operator*() const
+    operator*()
     {
-      std::string_view name;
-
-      return std::make_tuple(name, 0, "foo");
-    }
-
-    bool
-    operator==(const iterator &o) const
-    {
-      return _it == o._it;
-    }
-
-    bool
-    operator!=(const iterator &o) const
-    {
-      return _it != o._it;
+      return std::make_tuple((*_table_it).first, 0, const_cast<const url_mapping>(*_idx_it));
     }
 
   private:
     void
     next()
     {
-      ++_it;
+      ++_idx_it;
+      if (_idx_it == _idx_end) {
+        ++_table_it;
+        if (_table_it != _table_end) {
+          _idx_it  = (*_table_it).second->begin();
+          _idx_end = (*_table_it).second->end();
+        } else {
+          // clear these to replicate end();
+          _idx_it  = {};
+          _idx_end = {};
+        }
+      }
     }
 
-    URLTable::iterator _it;
+    URLTable::iterator            _table_it;
+    URLTable::iterator            _table_end;
+    UrlMappingPathIndex::iterator _idx_it;
+    UrlMappingPathIndex::iterator _idx_end;
   };
 
   iterator
   begin()
   {
-    return iterator(forward_mappings.hash_lookup->begin());
+    return iterator(forward_mappings.hash_lookup->begin(), forward_mappings.hash_lookup->end());
   }
 
   iterator
   end()
   {
-    return iterator(forward_mappings.hash_lookup->end());
+    return iterator(forward_mappings.hash_lookup->end(), forward_mappings.hash_lookup->end());
   }
 
 private:
@@ -319,6 +326,8 @@ private:
   void         _destroyList(RegexMappingList &regexes);
   inline bool  _addToStore(MappingsStore &store, url_mapping *new_mapping, RegexMapping *reg_map, const char *src_host,
                            bool is_cur_mapping_regex, int &count);
+
+  int _buildTable(const std::function<bool(UrlRewrite *)> &f);
 };
 
 void url_rewrite_remap_request(const UrlMappingContainer &mapping_container, URL *request_url, int scheme = -1);

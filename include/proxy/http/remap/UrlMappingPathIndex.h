@@ -76,6 +76,8 @@ public:
       }
     }
 
+    iterator() {}
+
     iterator &
     operator++()
     {
