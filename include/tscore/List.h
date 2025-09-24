@@ -326,9 +326,11 @@ template <class C, class L = typename C::Link_link> struct DLL {
 
     /// Dereference operator.
     C const &operator*();
+    C const &operator*() const;
 
     /// Indirection operator.
     C const *operator->();
+    C const *operator->() const;
 
     /// Pre-increment.
     self_type &operator++();
@@ -498,8 +500,22 @@ DLL<C, L>::const_iterator::operator*()
 }
 
 template <class C, class L>
+C const &
+DLL<C, L>::const_iterator::operator*() const
+{
+  return *_spot;
+}
+
+template <class C, class L>
 C const *
 DLL<C, L>::const_iterator::operator->()
+{
+  return _spot;
+}
+
+template <class C, class L>
+C const *
+DLL<C, L>::const_iterator::operator->() const
 {
   return _spot;
 }

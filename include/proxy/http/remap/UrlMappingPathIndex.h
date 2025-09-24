@@ -97,7 +97,7 @@ public:
     }
 
     reference
-    operator*()
+    operator*() const
     {
       return *_tit;
     }
@@ -120,8 +120,8 @@ public:
     {
       ++_tit;
       if (_tit == _tit_end) {
+        ++_it;
         if (_it != _it_end) {
-          ++_it;
           _tit     = _it->second->begin();
           _tit_end = _it->second->end();
         }

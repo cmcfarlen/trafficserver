@@ -163,11 +163,11 @@ UrlRewrite::~UrlRewrite()
   ats_free(this->ts_name);
   ats_free(this->http_default_redirect_url);
 
-  DestroyStore(forward_mappings);
-  DestroyStore(reverse_mappings);
-  DestroyStore(permanent_redirects);
-  DestroyStore(temporary_redirects);
-  DestroyStore(forward_mappings_with_recv_port);
+  DestroyStore(forward_mappings());
+  DestroyStore(reverse_mappings());
+  DestroyStore(permanent_redirects());
+  DestroyStore(temporary_redirects());
+  DestroyStore(forward_mappings_with_recv_port());
   _valid = false;
 
   /* Deactivate the factory when all SM are gone for sure. */
@@ -205,19 +205,19 @@ UrlRewrite::Print() const
   printf("  Reverse Proxy is %s\n", (reverse_proxy == 0) ? "Off" : "On");
 
   printf("  Forward Mapping Table with %d entries\n", num_rules_forward);
-  PrintStore(forward_mappings);
+  PrintStore(forward_mappings());
 
   printf("  Reverse Mapping Table with %d entries\n", num_rules_reverse);
-  PrintStore(reverse_mappings);
+  PrintStore(reverse_mappings());
 
   printf("  Permanent Redirect Mapping Table with %d entries\n", num_rules_redirect_permanent);
-  PrintStore(permanent_redirects);
+  PrintStore(permanent_redirects());
 
   printf("  Temporary Redirect Mapping Table with %d entries\n", num_rules_redirect_temporary);
-  PrintStore(temporary_redirects);
+  PrintStore(temporary_redirects());
 
   printf("  Forward Mapping With Recv Port Table with %d entries\n", num_rules_forward_with_recv_port);
-  PrintStore(forward_mappings_with_recv_port);
+  PrintStore(forward_mappings_with_recv_port());
 
   if (http_default_redirect_url != nullptr) {
     printf("  Referer filter default redirect URL: \"%s\"\n", http_default_redirect_url);
@@ -247,11 +247,11 @@ std::string
 UrlRewrite::PrintRemapHits()
 {
   std::string result;
-  result += PrintRemapHitsStore(forward_mappings);
-  result += PrintRemapHitsStore(reverse_mappings);
-  result += PrintRemapHitsStore(permanent_redirects);
-  result += PrintRemapHitsStore(temporary_redirects);
-  result += PrintRemapHitsStore(forward_mappings_with_recv_port);
+  result += PrintRemapHitsStore(forward_mappings());
+  result += PrintRemapHitsStore(reverse_mappings());
+  result += PrintRemapHitsStore(permanent_redirects());
+  result += PrintRemapHitsStore(temporary_redirects());
+  result += PrintRemapHitsStore(forward_mappings_with_recv_port());
 
   if (result.size() > 2) {
     result.pop_back(); // remove the trailing \n
@@ -291,7 +291,7 @@ UrlRewrite::PrintRemapHitsStore(MappingsStore &store)
 */
 url_mapping *
 UrlRewrite::_tableLookup(std::unique_ptr<URLTable> &h_table, URL *request_url, int request_port, char *request_host,
-                         int request_host_len)
+                         int request_host_len) const
 {
   if (!h_table) {
     h_table.reset(new URLTable);
@@ -399,7 +399,7 @@ UrlRewrite::ReverseMap(HTTPHdr *response_header)
   };
 
   if (unlikely(num_rules_reverse == 0)) {
-    ink_assert(reverse_mappings.empty());
+    ink_assert(reverse_mappings().empty());
     return false;
   }
 
@@ -742,24 +742,26 @@ UrlRewrite::InsertMapping(mapping_type maptype, url_mapping *new_mapping, RegexM
   switch (maptype) {
   case mapping_type::FORWARD_MAP:
   case mapping_type::FORWARD_MAP_REFERER:
-    success = _addToStore(forward_mappings, new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_forward);
+    success = _addToStore(forward_mappings(), new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_forward);
     if (success) {
       // @todo: is this applicable to regex mapping too?
       SetHomePageRedirectFlag(new_mapping, new_mapping->toURL);
     }
     break;
   case mapping_type::REVERSE_MAP:
-    success = _addToStore(reverse_mappings, new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_reverse);
+    success = _addToStore(reverse_mappings(), new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_reverse);
     new_mapping->homePageRedirect = false;
     break;
   case mapping_type::PERMANENT_REDIRECT:
-    success = _addToStore(permanent_redirects, new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_redirect_permanent);
+    success =
+      _addToStore(permanent_redirects(), new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_redirect_permanent);
     break;
   case mapping_type::TEMPORARY_REDIRECT:
-    success = _addToStore(temporary_redirects, new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_redirect_temporary);
+    success =
+      _addToStore(temporary_redirects(), new_mapping, reg_map, src_host, is_cur_mapping_regex, num_rules_redirect_temporary);
     break;
   case mapping_type::FORWARD_MAP_WITH_RECV_PORT:
-    success = _addToStore(forward_mappings_with_recv_port, new_mapping, reg_map, src_host, is_cur_mapping_regex,
+    success = _addToStore(forward_mappings_with_recv_port(), new_mapping, reg_map, src_host, is_cur_mapping_regex,
                           num_rules_forward_with_recv_port);
     break;
   default:
@@ -777,9 +779,9 @@ UrlRewrite::InsertForwardMapping(mapping_type maptype, url_mapping *mapping, con
   bool success;
 
   if (maptype == mapping_type::FORWARD_MAP_WITH_RECV_PORT) {
-    success = TableInsert(forward_mappings_with_recv_port.hash_lookup, mapping, src_host);
+    success = TableInsert(forward_mappings_with_recv_port().hash_lookup, mapping, src_host);
   } else {
-    success = TableInsert(forward_mappings.hash_lookup, mapping, src_host);
+    success = TableInsert(forward_mappings().hash_lookup, mapping, src_host);
   }
 
   if (success) {
@@ -802,22 +804,22 @@ UrlRewrite::InsertForwardMapping(mapping_type maptype, url_mapping *mapping, con
 int
 UrlRewrite::_buildTable(const std::function<bool(UrlRewrite *)> &f)
 {
-  ink_assert(forward_mappings.empty());
-  ink_assert(reverse_mappings.empty());
-  ink_assert(permanent_redirects.empty());
-  ink_assert(temporary_redirects.empty());
-  ink_assert(forward_mappings_with_recv_port.empty());
+  ink_assert(forward_mappings().empty());
+  ink_assert(reverse_mappings().empty());
+  ink_assert(permanent_redirects().empty());
+  ink_assert(temporary_redirects().empty());
+  ink_assert(forward_mappings_with_recv_port().empty());
   ink_assert(num_rules_forward == 0);
   ink_assert(num_rules_reverse == 0);
   ink_assert(num_rules_redirect_permanent == 0);
   ink_assert(num_rules_redirect_temporary == 0);
   ink_assert(num_rules_forward_with_recv_port == 0);
 
-  forward_mappings.hash_lookup.reset(new URLTable);
-  reverse_mappings.hash_lookup.reset(new URLTable);
-  permanent_redirects.hash_lookup.reset(new URLTable);
-  temporary_redirects.hash_lookup.reset(new URLTable);
-  forward_mappings_with_recv_port.hash_lookup.reset(new URLTable);
+  forward_mappings().hash_lookup.reset(new URLTable);
+  reverse_mappings().hash_lookup.reset(new URLTable);
+  permanent_redirects().hash_lookup.reset(new URLTable);
+  temporary_redirects().hash_lookup.reset(new URLTable);
+  forward_mappings_with_recv_port().hash_lookup.reset(new URLTable);
 
   if (!f(this)) {
     return TS_ERROR;
@@ -825,27 +827,27 @@ UrlRewrite::_buildTable(const std::function<bool(UrlRewrite *)> &f)
 
   // Destroy unused tables
   if (num_rules_forward == 0) {
-    forward_mappings.hash_lookup.reset(nullptr);
+    forward_mappings().hash_lookup.reset(nullptr);
   } else {
-    if (forward_mappings.hash_lookup->find("") != forward_mappings.hash_lookup->end()) {
+    if (forward_mappings().hash_lookup->find("") != forward_mappings().hash_lookup->end()) {
       nohost_rules = 1;
     }
   }
 
   if (num_rules_reverse == 0) {
-    reverse_mappings.hash_lookup.reset(nullptr);
+    reverse_mappings().hash_lookup.reset(nullptr);
   }
 
   if (num_rules_redirect_permanent == 0) {
-    permanent_redirects.hash_lookup.reset(nullptr);
+    permanent_redirects().hash_lookup.reset(nullptr);
   }
 
   if (num_rules_redirect_temporary == 0) {
-    temporary_redirects.hash_lookup.reset(nullptr);
+    temporary_redirects().hash_lookup.reset(nullptr);
   }
 
   if (num_rules_forward_with_recv_port == 0) {
-    forward_mappings_with_recv_port.hash_lookup.reset(nullptr);
+    forward_mappings_with_recv_port().hash_lookup.reset(nullptr);
   }
 
   return TS_SUCCESS;
@@ -916,7 +918,7 @@ UrlRewrite::TableInsert(std::unique_ptr<URLTable> &h_table, url_mapping *mapping
 */
 bool
 UrlRewrite::_mappingLookup(MappingsStore &mappings, URL *request_url, int request_port, const char *request_host,
-                           int request_host_len, UrlMappingContainer &mapping_container)
+                           int request_host_len, UrlMappingContainer &mapping_container) const
 {
   char request_host_lower[TS_MAX_HOST_NAME_LEN];
 
@@ -954,7 +956,7 @@ UrlRewrite::_mappingLookup(MappingsStore &mappings, URL *request_url, int reques
 // does not null terminate return string
 int
 UrlRewrite::_expandSubstitutions(size_t *matches_info, const RegexMapping *reg_map, const char *matched_string, char *dest_buf,
-                                 int dest_buf_size)
+                                 int dest_buf_size) const
 {
   int cur_buf_size = 0;
   int token_start  = 0;
@@ -1001,7 +1003,7 @@ lOverFlow:
 
 bool
 UrlRewrite::_regexMappingLookup(RegexMappingList &regex_mappings, URL *request_url, int request_port, const char *request_host,
-                                int request_host_len, int rank_ceiling, UrlMappingContainer &mapping_container)
+                                int request_host_len, int rank_ceiling, UrlMappingContainer &mapping_container) const
 {
   bool         retval = false;
   RegexMatches matches;

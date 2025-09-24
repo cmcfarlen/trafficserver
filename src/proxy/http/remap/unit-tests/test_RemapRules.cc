@@ -247,7 +247,7 @@ map http://front.example.com \
       auto it  = urlrw->begin();
       auto end = urlrw->end();
 
-      REQUIRE(it != end);
+      REQUIRE(urlrw->begin() != urlrw->end());
       REQUIRE(std::get<0>(*it) == "front.example.com");
       ++it;
       REQUIRE(it == end);

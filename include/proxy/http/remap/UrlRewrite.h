@@ -32,8 +32,10 @@
 #include "proxy/http/remap/PluginFactory.h"
 #include "proxy/http/remap/NextHopStrategyFactory.h"
 #include "proxy/http/remap/RemapConfig.h"
+#include "tsutil/YamlCfg.h"
 
 #include <memory>
+#include <ranges>
 
 #define URL_REMAP_FILTER_NONE         0x00000000
 #define URL_REMAP_FILTER_REFERER      0x00000001 /* enable "referer" header validation */
@@ -43,8 +45,8 @@
 
  * used for redirection, mapping, and reverse mapping
  **/
-enum class mapping_type {
-  FORWARD_MAP,
+enum class mapping_type : size_t {
+  FORWARD_MAP = 0,
   REVERSE_MAP,
   PERMANENT_REDIRECT,
   TEMPORARY_REDIRECT,
@@ -180,41 +182,91 @@ public:
 
   bool TableInsert(std::unique_ptr<URLTable> &h_table, url_mapping *mapping, const char *src_host);
 
-  MappingsStore forward_mappings;
-  MappingsStore reverse_mappings;
-  MappingsStore permanent_redirects;
-  MappingsStore temporary_redirects;
-  MappingsStore forward_mappings_with_recv_port;
+  std::array<MappingsStore, static_cast<size_t>(mapping_type::NONE)> mappings;
+
+  MappingsStore &
+  forward_mappings()
+  {
+    return mappings[static_cast<size_t>(mapping_type::FORWARD_MAP)];
+  };
+
+  MappingsStore &
+  reverse_mappings()
+  {
+    return mappings[static_cast<size_t>(mapping_type::REVERSE_MAP)];
+  };
+  MappingsStore &
+  permanent_redirects()
+  {
+    return mappings[static_cast<size_t>(mapping_type::PERMANENT_REDIRECT)];
+  };
+  MappingsStore &
+  temporary_redirects()
+  {
+    return mappings[static_cast<size_t>(mapping_type::TEMPORARY_REDIRECT)];
+  };
+  MappingsStore &
+  forward_mappings_with_recv_port()
+  {
+    return mappings[static_cast<size_t>(mapping_type::FORWARD_MAP_WITH_RECV_PORT)];
+  };
+
+  const MappingsStore &
+  forward_mappings() const
+  {
+    return mappings[static_cast<size_t>(mapping_type::FORWARD_MAP)];
+  };
+
+  const MappingsStore &
+  reverse_mappings() const
+  {
+    return mappings[static_cast<size_t>(mapping_type::REVERSE_MAP)];
+  };
+  const MappingsStore &
+  permanent_redirects() const
+  {
+    return mappings[static_cast<size_t>(mapping_type::PERMANENT_REDIRECT)];
+  };
+  const MappingsStore &
+  temporary_redirects() const
+  {
+    return mappings[static_cast<size_t>(mapping_type::TEMPORARY_REDIRECT)];
+  };
+  const MappingsStore &
+  forward_mappings_with_recv_port() const
+  {
+    return mappings[static_cast<size_t>(mapping_type::FORWARD_MAP_WITH_RECV_PORT)];
+  };
 
   bool
   forwardMappingLookup(URL *request_url, int request_port, const char *request_host, int request_host_len,
                        UrlMappingContainer &mapping_container)
   {
-    return _mappingLookup(forward_mappings, request_url, request_port, request_host, request_host_len, mapping_container);
+    return _mappingLookup(forward_mappings(), request_url, request_port, request_host, request_host_len, mapping_container);
   }
   bool
   reverseMappingLookup(URL *request_url, int request_port, const char *request_host, int request_host_len,
                        UrlMappingContainer &mapping_container)
   {
-    return _mappingLookup(reverse_mappings, request_url, request_port, request_host, request_host_len, mapping_container);
+    return _mappingLookup(reverse_mappings(), request_url, request_port, request_host, request_host_len, mapping_container);
   }
   bool
   permanentRedirectLookup(URL *request_url, int request_port, const char *request_host, int request_host_len,
                           UrlMappingContainer &mapping_container)
   {
-    return _mappingLookup(permanent_redirects, request_url, request_port, request_host, request_host_len, mapping_container);
+    return _mappingLookup(permanent_redirects(), request_url, request_port, request_host, request_host_len, mapping_container);
   }
   bool
   temporaryRedirectLookup(URL *request_url, int request_port, const char *request_host, int request_host_len,
                           UrlMappingContainer &mapping_container)
   {
-    return _mappingLookup(temporary_redirects, request_url, request_port, request_host, request_host_len, mapping_container);
+    return _mappingLookup(temporary_redirects(), request_url, request_port, request_host, request_host_len, mapping_container);
   }
   bool
   forwardMappingWithRecvPortLookup(URL *request_url, int recv_port, const char *request_host, int request_host_len,
                                    UrlMappingContainer &mapping_container)
   {
-    return _mappingLookup(forward_mappings_with_recv_port, request_url, recv_port, request_host, request_host_len,
+    return _mappingLookup(forward_mappings_with_recv_port(), request_url, recv_port, request_host, request_host_len,
                           mapping_container);
   }
 
@@ -237,7 +289,7 @@ public:
   {
   public:
     using iterator_category = std::input_iterator_tag;
-    using value_type        = std::tuple<std::string, int, url_mapping>;
+    using value_type        = std::tuple<const std::string &, int, const url_mapping &>;
     using difference_type   = ptrdiff_t;
     using pointer           = value_type *;
     using reference         = value_type &;
@@ -269,9 +321,15 @@ public:
     }
 
     value_type
-    operator*()
+    operator*() const
     {
-      return std::make_tuple((*_table_it).first, 0, const_cast<const url_mapping>(*_idx_it));
+      return std::make_tuple(std::ref((*_table_it).first), 0, std::ref(*_idx_it));
+    }
+
+    bool
+    operator==(const iterator &o) const
+    {
+      return _table_it == o._table_it && _table_end == o._table_end && _idx_it == o._idx_it && _idx_end == o._idx_end;
     }
 
   private:
@@ -299,15 +357,15 @@ public:
   };
 
   iterator
-  begin()
+  begin() const
   {
-    return iterator(forward_mappings.hash_lookup->begin(), forward_mappings.hash_lookup->end());
+    return iterator(forward_mappings().hash_lookup->begin(), forward_mappings().hash_lookup->end());
   }
 
   iterator
-  end()
+  end() const
   {
-    return iterator(forward_mappings.hash_lookup->end(), forward_mappings.hash_lookup->end());
+    return iterator(forward_mappings().hash_lookup->end(), forward_mappings().hash_lookup->end());
   }
 
 private:
@@ -315,13 +373,13 @@ private:
   ACLBehaviorPolicy _acl_behavior_policy = ACLBehaviorPolicy::ACL_BEHAVIOR_LEGACY;
 
   bool _mappingLookup(MappingsStore &mappings, URL *request_url, int request_port, const char *request_host, int request_host_len,
-                      UrlMappingContainer &mapping_container);
+                      UrlMappingContainer &mapping_container) const;
   url_mapping *_tableLookup(std::unique_ptr<URLTable> &h_table, URL *request_url, int request_port, char *request_host,
-                            int request_host_len);
+                            int request_host_len) const;
   bool         _regexMappingLookup(RegexMappingList &regex_mappings, URL *request_url, int request_port, const char *request_host,
-                                   int request_host_len, int rank_ceiling, UrlMappingContainer &mapping_container);
+                                   int request_host_len, int rank_ceiling, UrlMappingContainer &mapping_container) const;
   int          _expandSubstitutions(size_t *matches_info, const RegexMapping *reg_map, const char *matched_string, char *dest_buf,
-                                    int dest_buf_size);
+                                    int dest_buf_size) const;
   void         _destroyTable(std::unique_ptr<URLTable> &h_table);
   void         _destroyList(RegexMappingList &regexes);
   inline bool  _addToStore(MappingsStore &store, url_mapping *new_mapping, RegexMapping *reg_map, const char *src_host,

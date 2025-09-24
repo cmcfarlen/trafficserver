@@ -56,7 +56,7 @@ RemapProcessor::setup_for_remap(HttpTransact::State *s, UrlRewrite *table)
   ink_assert(redirect_url != nullptr);
 
   if (unlikely((table->num_rules_forward == 0) && (table->num_rules_forward_with_recv_port == 0))) {
-    ink_assert(table->forward_mappings.empty() && table->forward_mappings_with_recv_port.empty());
+    ink_assert(table->forward_mappings().empty() && table->forward_mappings_with_recv_port().empty());
     Dbg(dbg_ctl_url_rewrite, "[lookup] No forward mappings found; Skipping...");
     return false;
   }
@@ -108,7 +108,7 @@ RemapProcessor::setup_for_remap(HttpTransact::State *s, UrlRewrite *table)
       Dbg(dbg_ctl_url_rewrite, "Found forward mapping with recv port");
       mapping_found = true;
     } else if (table->num_rules_forward == 0) {
-      ink_assert(table->forward_mappings.empty());
+      ink_assert(table->forward_mappings().empty());
       Dbg(dbg_ctl_url_rewrite, "No forward mappings left");
       return false;
     }
