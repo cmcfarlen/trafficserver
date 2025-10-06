@@ -723,7 +723,7 @@ RemapCommand::remap_get()
 }
 
 void
-SearchRemapResponsePrinter::write_output(YAML::Node const &)
+SearchRemapResponsePrinter::write_output(YAML::Node const &result)
 {
-  printf("Whoa!\n");
+  write_output_json(result["data"] ? result["data"] : result);
 }

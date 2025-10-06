@@ -158,7 +158,7 @@ public:
     std::unique_ptr<URLTable> hash_lookup;
     RegexMappingList          regex_list;
     bool
-    empty()
+    empty() const
     {
       return ((hash_lookup == nullptr) && regex_list.empty());
     }
