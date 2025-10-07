@@ -42,14 +42,16 @@ swoc::Rv<YAML::Node>
 remap_search(std::string_view const & /* id ATS_UNUSED */, YAML::Node const &params)
 {
   swoc::Rv<YAML::Node> resp{};
-  auto                 p = params.as<SearchParams>();
+  const auto           p = params.as<SearchParams>();
 
-  auto render_mappings = [](const UrlRewrite::MappingsStore &store) -> YAML::Node {
+  auto render_mappings = [&p](const UrlRewrite::MappingsStore &store) -> YAML::Node {
     YAML::Node s{};
     YAML::Node keys{};
     if (!store.empty()) {
       for (auto [k, tbl] : *store.hash_lookup) {
-        keys.push_back(k);
+        if (k.find(p.authority) != std::string::npos) {
+          keys.push_back(k);
+        }
       }
       s["keys"] = keys;
     }
