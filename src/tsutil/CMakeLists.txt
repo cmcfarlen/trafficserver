@@ -81,6 +81,7 @@ if(BUILD_TESTING)
     unit_tests/test_Regex.cc
     unit_tests/test_ts_meta.cc
     unit_tests/test_time_parser.cc
+    unit_tests/test_Timing.cc
   )
 
   target_link_libraries(test_tsutil PRIVATE tsutil Catch2::Catch2WithMain)
