@@ -23,6 +23,7 @@
 
 #if defined(__x86_64__) || defined(_M_X64)
 #include <x86intrin.h>
+#include <cpuid.h>
 #elif defined(__aarch64__)
 #if defined(__clang__)
 #include <arm_acle.h>
@@ -63,7 +64,7 @@ namespace timing
     read_cycle_serialized() noexcept
     {
       unsigned int cpu;
-      uint64_t     cycles = __rdtscp(cpu);
+      uint64_t     cycles = __rdtscp(&cpu);
       return {cycles, cpu};
     }
 
