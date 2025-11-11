@@ -38,3 +38,6 @@ target_link_libraries(benchmark_Random PRIVATE Catch2::Catch2WithMain ts::tscore
 
 add_executable(benchmark_Timing benchmark_Timing.cc)
 target_link_libraries(benchmark_Timing PRIVATE Catch2::Catch2WithMain ts::tscore ts::tsutil)
+
+add_executable(benchmark_Timing_MT benchmark_Timing_MT.cc)
+target_link_libraries(benchmark_Timing_MT PRIVATE ts::tscore ts::tsutil)
