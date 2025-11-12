@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <utility>
 
@@ -151,13 +152,41 @@ namespace timing
 
   } // namespace detail
 
-  [[gnu::always_inline]] static inline uint64_t
+  [[gnu::always_inline]] static inline std::chrono::nanoseconds
   cycles_to_nanoseconds(uint64_t cycles) noexcept
   {
     const uint64_t freq = detail::cycle_frequency();
     // (cycles * 1e9) / freq
-    return (cycles * 1'000'000'000ULL) / freq;
+    return std::chrono::nanoseconds((cycles * 1'000'000'000ULL) / freq);
   }
+
+  struct Timing {
+    uint64_t count;
+
+    Timing() { reset(); }
+
+    void
+    reset()
+    {
+      count = detail::read_cycle_ordered();
+    }
+
+    /**
+     * Returns the cycle count since the last call to reset.
+     */
+    uint64_t
+    elapsed()
+    {
+      auto current = detail::read_cycle_ordered();
+      return current - count;
+    }
+
+    std::chrono::nanoseconds
+    elapsed_time()
+    {
+      return cycles_to_nanoseconds(elapsed());
+    }
+  };
 } // namespace timing
 
 } // namespace ts
