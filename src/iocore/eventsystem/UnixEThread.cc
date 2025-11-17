@@ -25,6 +25,7 @@
 #include <chrono>
 
 #include <tscore/TSSystemState.h>
+#include "tsutil/Timing.h"
 
 //////////////////////////////////////////////////////////////////////
 //
@@ -234,10 +235,9 @@ EThread::execute_regular()
 {
   Event *e;
   Que(Event, link) NegativeQueue;
-  ink_hrtime next_time;
-  ink_hrtime delta;            // time spent in the event loop
-  ink_hrtime loop_start_time;  // Time the loop started.
-  ink_hrtime loop_finish_time; // Time at the end of the loop.
+  ink_hrtime         next_time;
+  ink_hrtime         loop_start_time; // Time the loop started.
+  ts::timing::Timing loop_timer;
 
   loop_start_time = ink_get_hrtime();
 
@@ -328,15 +328,12 @@ EThread::execute_regular()
     this->heartbeat_state.seq.fetch_add(1, std::memory_order_relaxed);
 
     // loop cleanup
-    loop_finish_time = ink_get_hrtime();
-    // @a delta can be negative due to time of day adjustments (which apparently happen quite frequently). I
-    // tried using the monotonic clock to get around this but it was *very* stuttery (up to hundreds
-    // of milliseconds), far too much to be actually used.
-    delta           = std::max<ink_hrtime>(0, loop_finish_time - loop_start_time);
-    loop_start_time = loop_finish_time;
+    auto delta = loop_timer.elapsed_time();
+
+    loop_start_time = ink_get_hrtime();
 
     metrics.decay();
-    metrics.record_loop_time(delta);
+    metrics.record_loop_time(delta.count());
     current_slice->record_event_count(ev_count);
     current_slice->record_drain_queue(drain_queue);
   }

@@ -25,6 +25,7 @@
 #include "P_UnixNet.h"
 #include "iocore/net/NetHandler.h"
 #include "iocore/net/PollCont.h"
+#include "tsutil/Timing.h"
 #if TS_USE_LINUX_IO_URING
 #include "iocore/io_uring/IO_URING.h"
 #endif
@@ -357,11 +358,10 @@ NetHandler::waitForActivity(ink_hrtime timeout)
 #endif
 
   // Polling event by PollCont
-  PollCont  *p        = get_PollCont(this->thread);
-  ink_hrtime pre_poll = ink_get_hrtime();
+  PollCont          *p = get_PollCont(this->thread);
+  ts::timing::Timing t;
   p->do_poll(timeout);
-  ink_hrtime post_poll = ink_get_hrtime();
-  ink_hrtime poll_time = post_poll - pre_poll;
+  auto poll_time = t.elapsed();
 
   // Get & Process polling result
   PollDescriptor *pd = get_PollDescriptor(this->thread);
@@ -375,8 +375,7 @@ NetHandler::waitForActivity(ink_hrtime timeout)
   pd->result = 0;
 
   process_ready_list();
-  ink_hrtime post_process = ink_get_hrtime();
-  ink_hrtime process_time = post_process - post_poll;
+  ink_hrtime process_time = t.elapsed() - poll_time;
   this->thread->metrics.current_slice.load(std::memory_order_acquire)->record_io_stats(poll_time, process_time);
 
 #if TS_USE_LINUX_IO_URING

@@ -165,10 +165,33 @@ namespace timing
 
     Timing() { reset(); }
 
+    /**
+     * Reset the count to the current counter value
+     */
     void
     reset()
     {
       count = detail::read_cycle_ordered();
+    }
+
+    /**
+     * Reset the count to the give value.
+     */
+    void
+    reset(uint64_t c)
+    {
+      count = c;
+    }
+
+    /**
+     * Increment the count by the given value
+     *
+     * This can be used after elapased is called to reset the counter without reading the counter register.
+     */
+    void
+    increment(uint64_t byC)
+    {
+      count += byC;
     }
 
     /**
