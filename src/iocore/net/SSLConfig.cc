@@ -49,6 +49,7 @@
 #include <cstring>
 #include <cmath>
 #include <unordered_map>
+#include <thread>
 
 int                SSLConfig::config_index                                = 0;
 int                SSLConfig::configids[]                                 = {0, 0};
@@ -523,6 +524,8 @@ SSLConfigParams::initialize()
 
   configFilePath        = ats_stringdup(RecConfigReadConfigPath("proxy.config.ssl.server.multicert.filename"));
   configExitOnLoadError = RecGetRecordInt("proxy.config.ssl.server.multicert.exit_on_load_fail").value_or(0);
+  configLoadConcurrency =
+    RecGetRecordInt("proxy.config.ssl.server.multicert.concurrency").value_or(std::thread::hardware_concurrency());
 
   {
     auto rec_str{RecGetRecordStringAlloc("proxy.config.ssl.server.private_key.path")};

@@ -72,6 +72,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <vector>
+#include <list>
 
 using namespace std::literals;
 
@@ -1932,20 +1933,19 @@ void
 SSLMultiCertConfigLoader::_load_lines(SSLCertLookup *lookup, SSLConfigLines::const_iterator begin,
                                       SSLConfigLines::const_iterator end)
 {
-  const matcher_tags sslCertTags = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false};
-  const SSLConfigParams *params  = this->_params;
+  const matcher_tags     sslCertTags = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, false};
+  const SSLConfigParams *params      = this->_params;
 
   for (auto it = begin; it != end; ++it) {
     auto &&[line, line_num]                              = *it;
     shared_SSLMultiCertConfigParams sslMultiCertSettings = std::make_shared<SSLMultiCertConfigParams>();
-    const char *errPtr;
-    matcher_line line_info;
+    const char                     *errPtr;
+    matcher_line                    line_info;
 
     errPtr = parseConfigLine(line, &line_info, &sslCertTags);
     Dbg(dbg_ctl_ssl_load, "currently parsing %s", line);
     if (errPtr != nullptr) {
-      RecSignalWarning(REC_SIGNAL_CONFIG_ERROR, "%s: discarding %s entry at line %d: %s", __func__, params->configFilePath,
-                       line_num, errPtr);
+      Warning("%s: discarding %s entry at line %d: %s", __func__, params->configFilePath, line_num, errPtr);
     } else {
       if (ssl_extract_certificate(&line_info, sslMultiCertSettings.get())) {
         // There must be a certificate specified unless the tunnel action is set
@@ -1987,9 +1987,9 @@ SSLMultiCertConfigLoader::load(SSLCertLookup *lookup, bool firstLoad)
 
   // Store all the lines in the list, slightly clunky but lets us parallelize this if allowed
   // ToDo: Maybe change the parser here to use a more C++'ish line parser rather than tokLine()...
-  char *line        = nullptr;
-  unsigned line_num = 0;
-  char *tok_state   = nullptr;
+  char          *line      = nullptr;
+  unsigned       line_num  = 0;
+  char          *tok_state = nullptr;
   SSLConfigLines single_lines;
 
   line = tokLine(content.data(), &tok_state);
@@ -2012,10 +2012,10 @@ SSLMultiCertConfigLoader::load(SSLCertLookup *lookup, bool firstLoad)
   if (params->configLoadConcurrency > 0) {
     int num_threads = firstLoad ? std::max(static_cast<int>(std::thread::hardware_concurrency()), params->configLoadConcurrency) :
                                   params->configLoadConcurrency;
-    std::size_t bucket_size                = std::max(1u, static_cast<unsigned>(single_lines.size() / num_threads));
-    SSLConfigLines::const_iterator current = std::as_const(single_lines).begin();
-    std::list<std::thread> threads;
-    std::size_t num_lines = single_lines.size();
+    std::size_t                    bucket_size = std::max(1u, static_cast<unsigned>(single_lines.size() / num_threads));
+    SSLConfigLines::const_iterator current     = std::as_const(single_lines).begin();
+    std::list<std::thread>         threads;
+    std::size_t                    num_lines = single_lines.size();
 
     while (num_lines > 0) {
       SSLConfigLines::const_iterator last = current + std::min(num_lines, bucket_size);
@@ -2027,8 +2027,9 @@ SSLMultiCertConfigLoader::load(SSLCertLookup *lookup, bool firstLoad)
 
     // Wait for all the threads to finish their tasks.
     for (std::thread &th : threads) {
-      if (th.joinable())
+      if (th.joinable()) {
         th.join();
+      }
     }
     ink_assert(num_lines == 0); // Make sure no lines where not processed...
   } else {
