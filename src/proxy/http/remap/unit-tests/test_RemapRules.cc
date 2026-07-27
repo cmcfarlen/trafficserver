@@ -165,4 +165,32 @@ map https://h1.example.com \
       REQUIRE(urlmap.getMapping()->filter->src_ip_array[0].match_all_addresses);
     }
   }
+
+  GIVEN("A regex map with a shorter alternative first")
+  {
+    std::unique_ptr<UrlRewrite> urlrw = std::make_unique<UrlRewrite>();
+
+    std::string config = R"RMCFG(
+regex_map http://cdn\.example\.com|cdn\.example\.com\.edge/ http://origin.example.com/
+  )RMCFG";
+
+    auto cpath = write_test_remap(config, "regex-alternatives");
+    int  rc    = urlrw->BuildTable(cpath.c_str());
+
+    THEN("matching backtracks to a complete alternative")
+    {
+      EasyURL short_url("http://cdn.example.com/");
+      EasyURL long_url("http://cdn.example.com.edge/");
+      EasyURL trailing_url("http://cdn.example.com.evil/");
+
+      UrlMappingContainer short_mapping{short_url.heap};
+      UrlMappingContainer long_mapping{long_url.heap};
+      UrlMappingContainer trailing_mapping{trailing_url.heap};
+
+      REQUIRE(rc == TS_SUCCESS);
+      REQUIRE(urlrw->forwardMappingLookup(&short_url.url, 80, "cdn.example.com", 15, short_mapping));
+      REQUIRE(urlrw->forwardMappingLookup(&long_url.url, 80, "cdn.example.com.edge", 20, long_mapping));
+      REQUIRE_FALSE(urlrw->forwardMappingLookup(&trailing_url.url, 80, "cdn.example.com.evil", 20, trailing_mapping));
+    }
+  }
 }

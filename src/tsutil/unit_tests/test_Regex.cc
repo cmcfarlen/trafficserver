@@ -122,6 +122,19 @@ TEST_CASE("Regex", "[libts][Regex]")
     }
   }
 
+  // end anchoring must backtrack to a complete alternative without changing capture numbering
+  {
+    Regex        r;
+    RegexMatches matches;
+
+    REQUIRE(r.compile(R"((foo|foobar))", RE_ANCHORED | RE_ENDANCHORED) == true);
+    REQUIRE(r.get_capture_count() == 1);
+    REQUIRE(r.exec("foobar", matches) == 2);
+    REQUIRE(matches[0] == "foobar");
+    REQUIRE(matches[1] == "foobar");
+    REQUIRE(r.exec("foobar.evil") == false);
+  }
+
   // test getting submatches with operator[]
   for (auto &item : submatch_test_data) {
     Regex r;

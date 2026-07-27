@@ -34,7 +34,9 @@
 static_assert(RE_CASE_INSENSITIVE == PCRE2_CASELESS, "Update RE_CASE_INSERSITIVE for current PCRE2 version.");
 static_assert(RE_UNANCHORED == PCRE2_MULTILINE, "Update RE_MULTILINE for current PCRE2 version.");
 static_assert(RE_ANCHORED == PCRE2_ANCHORED, "Update RE_ANCHORED for current PCRE2 version.");
+#if defined(PCRE2_ENDANCHORED)
 static_assert(RE_ENDANCHORED == PCRE2_ENDANCHORED, "Update RE_ENDANCHORED for current PCRE2 version.");
+#endif
 static_assert(RE_NOTEMPTY == PCRE2_NOTEMPTY, "Update RE_NOTEMPTY for current PCRE2 version.");
 
 static_assert(RE_ERROR_NOMATCH == PCRE2_ERROR_NOMATCH, "Update RE_ERROR_NOMATCH for current PCRE2 version.");
@@ -44,7 +46,9 @@ static_assert(RE_ERROR_NULL == PCRE2_ERROR_NULL, "Update RE_ERROR_NULL for curre
 // We strip it before forwarding to pcre2_match, but a collision would cause spurious behavior
 // if someone OR'd it into a flag word that's also passed elsewhere.
 static_assert((RE_FULL_MATCH & PCRE2_ANCHORED) == 0, "RE_FULL_MATCH bit collides with PCRE2_ANCHORED");
+#if defined(PCRE2_ENDANCHORED)
 static_assert((RE_FULL_MATCH & PCRE2_ENDANCHORED) == 0, "RE_FULL_MATCH bit collides with PCRE2_ENDANCHORED");
+#endif
 static_assert((RE_FULL_MATCH & PCRE2_NO_UTF_CHECK) == 0, "RE_FULL_MATCH bit collides with PCRE2_NO_UTF_CHECK");
 static_assert((RE_FULL_MATCH & PCRE2_CASELESS) == 0, "RE_FULL_MATCH bit collides with PCRE2_CASELESS");
 static_assert((RE_FULL_MATCH & PCRE2_MULTILINE) == 0, "RE_FULL_MATCH bit collides with PCRE2_MULTILINE");
@@ -329,6 +333,21 @@ Regex::compile(std::string_view pattern, uint32_t flags)
 bool
 Regex::compile(std::string_view pattern, std::string &error, int &erroroffset, uint32_t flags)
 {
+#if !defined(PCRE2_ENDANCHORED)
+  std::string end_anchored_pattern;
+
+  if ((flags & RE_ENDANCHORED) != 0) {
+    // Security-sensitive fallback for PCRE2 releases without PCRE2_ENDANCHORED.
+    // The non-capturing group ensures \z applies to every top-level alternative.
+    // Newer PCRE2 releases receive the native flag so JIT sees the end constraint
+    // without allocating or rewriting the pattern.
+    end_anchored_pattern.reserve(pattern.size() + 6);
+    end_anchored_pattern.append("(?:").append(pattern).append(")\\z");
+    pattern  = end_anchored_pattern;
+    flags   &= ~RE_ENDANCHORED;
+  }
+#endif
+
   // free the existing compiled regex if there is one
   if (auto ptr = _Code::get(_code); ptr != nullptr) {
     pcre2_code_free(ptr);
