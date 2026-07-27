@@ -41,9 +41,11 @@ autest:
       proxy.config.url_remap.remap_required: 1
 
     remap_config:
-      # The rule must match ONLY the exact host "cdn.example.com", never a host
-      # in which that string appears as a leading or trailing substring.
-      - 'regex_map http://cdn\.example\.com/ http://127.0.0.1:{SERVER_HTTP_PORT}/'
+      # The rule must match only either complete alternative, never a host in
+      # which one of them appears as a leading or trailing substring. Listing
+      # the shorter prefix first also verifies the end anchor makes PCRE2
+      # backtrack to the longer alternative when appropriate.
+      - 'regex_map http://cdn\.example\.com|cdn\.example\.com\.edge/ http://127.0.0.1:{SERVER_HTTP_PORT}/'
 
 sessions:
 - transactions:
@@ -75,7 +77,7 @@ sessions:
 
   # Trailing-content attack: the host starts with the configured value but
   # continues past it. Start-anchoring alone would still match this; it is
-  # rejected only by full-hostname matching (RE_FULL_MATCH). ATS must return 404
+  # rejected only by the end-of-subject anchor. ATS must return 404
   # and never forward to the origin.
   - client-request:
       method: GET
@@ -162,6 +164,32 @@ sessions:
         fields:
         - [Host, cdn.example.com]
         - [uuid, exact-match]
+
+    server-response:
+      status: 200
+      reason: OK
+      headers:
+        fields:
+        - [Content-Length, 0]
+        - [X-Origin-Marker, served-by-origin]
+
+    proxy-response:
+      status: 200
+      headers:
+        fields:
+        - [X-Origin-Marker, {value: served-by-origin, as: equal}]
+
+  # Longer alternative: PCRE2 first tries the shorter "cdn.example.com"
+  # alternative. Its end assertion fails, so the engine must backtrack and
+  # match the complete "cdn.example.com.edge" alternative.
+  - client-request:
+      method: GET
+      url: /path/test.html
+      version: '1.1'
+      headers:
+        fields:
+        - [Host, cdn.example.com.edge]
+        - [uuid, longer-alternative-match]
 
     server-response:
       status: 200
