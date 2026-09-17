@@ -8,6 +8,8 @@
 
 **Tech Stack:** C++20, CMake (`mydev` preset), Catch2 unit tests (`test_tscore`, `test_net`), AuTest end-to-end tests (`tests/gold_tests/timeout/`).
 
+**Measurement:** Phase 0.5 (Tasks B1-B3) builds an isolated benchmark that drives the real `InactivityCop` against mock `NetEvent`s at high connection counts, and records a baseline **before any optimization lands**. Re-run it at every phase boundary and append to `docs/plans/inactivity-cop-benchmark-results.md`. Task order is therefore: Task 1, then **B1-B3**, then Task 2 onward.
+
 ---
 
 ## Background: what the current code does
@@ -69,7 +71,7 @@ Do not implement these; they are recorded so the choice is not relitigated.
 
 ---
 
-## Phase 0: Build and baseline
+## Phase 0: Build setup
 
 ### Task 1: Get a working build in this worktree
 
@@ -109,6 +111,319 @@ git commit -m "Add plan for InactivityCop timer wheel refactor"
 ```
 
 Do **not** commit `CMakeUserPresets.json` — it is gitignored for a reason.
+
+---
+
+## Phase 0.5: Isolated InactivityCop benchmark and baseline
+
+**Do this before Phase 1.** The point is to measure the current code, so the baseline must be recorded before any optimization lands.
+
+### Why it can be isolated cheaply
+
+`test_net`'s Catch2 main (`src/iocore/net/unit_tests/unit_test_main.cc:38-77`) already boots everything the cop needs:
+
+- `Layout::create()`, `Diags`, `RecProcessInit()`, `LibRecordsConfigInit()`, `init_global_lifecycle_hooks()`
+- `ink_event_system_init()` + `eventProcessor.start(1)`
+- **`EThread *main_thread = new EThread; main_thread->set_specific();`** — this is the key line. It makes `this_ethread()` valid on the Catch2 main thread with no event loop running, so the cop can be driven **synchronously and deterministically** from the benchmark body. `new_ProxyMutex()` works too.
+
+Adding a file to the existing `test_net` target also sidesteps the `inknet`↔`proxy` circular dependency that `src/iocore/net/CMakeLists.txt:141-220` solves with `libinknet_stub.cc` and link groups. A standalone target in `tools/benchmark/` would have to reproduce all of that, including the APPLE-specific link ordering — do not go there.
+
+Precedent for a benchmark living in `test_net`: `src/iocore/net/unit_tests/benchmark_TLSCertCompression.cc`, which uses the `[!benchmark]` Catch2 tag so it is excluded from normal `ctest` runs and only executes when asked for explicitly.
+
+### Four traps that will otherwise make this benchmark lie
+
+1. **`net_rsb` is all null pointers.** `register_net_stats()` is `static inline` in `src/iocore/net/Net.cc:68`, so it is unreachable and never runs under `test_net`. `net_rsb` (declared `extern` at `src/iocore/net/P_Net.h:85`) is a zero-initialized global of raw `Metrics::Counter::AtomicType *`, so the cop's `Metrics::Counter::increment` calls would dereference null. The benchmark must populate the five fields the cop touches: `inactivity_cop_lock_acquire_failure`, `default_inactivity_timeout_applied`, `default_inactivity_timeout_count`, `keep_alive_queue_timeout_count`, `keep_alive_queue_timeout_total`. `Metrics::instance()` is a self-initializing singleton, so `Metrics::Counter::createPtr(...)` works standalone.
+2. **`configure_per_thread_values()` divides by zero.** It computes `config.max_connections_in / eventProcessor.thread_group[ET_NET]._count`, and ET_NET is never registered here because the net processor is not started. Never call it. Set `nh.config.max_connections_in = 0` and `max_requests_in = 0` so `manage_active_queue`/`manage_keep_alive_queue` early-return, and set `max_connections_per_thread_in` / `max_requests_per_thread_in` directly in the one scenario that exercises queue trimming.
+3. **A dense `std::vector<Mock>` understates the current code's cost.** Real `NetEvent`s are large objects scattered across a `ProxyAllocator`; the sweep's cost *is* the random cache misses. A compact vector of small mocks would be far too cache-friendly and would make the improvement look smaller than it is. So: pad the mock to `sizeof(UnixNetVConnection)`, allocate each one individually with `new`, and shuffle the order they are pushed into `open_list` so traversal order differs from allocation order.
+4. **Build type dominates absolute numbers.** The `mydev` preset is `Debug`. That is fine for tracking relative change *if* held constant, but record the build type and preset next to every result, and prefer a dedicated `RelWithDebInfo` build directory for any number that gets quoted in a PR.
+
+### Task B1: Make InactivityCop reachable from a benchmark
+
+Pure motion plus dependency injection — **no behavior change**. It must land as its own commit before the baseline is taken.
+
+**Files:**
+- Create: `src/iocore/net/P_InactivityCop.h`
+- Modify: `src/iocore/net/UnixNet.cc:79-193`
+
+**Step 1: Move the class into a header**
+
+Move `class InactivityCop` verbatim from `src/iocore/net/UnixNet.cc:82-172` into a new `src/iocore/net/P_InactivityCop.h` (the `P_` prefix matches the existing `P_Net.h` / `P_UnixNet.h` convention for private net headers). Move the three `DbgCtl`s it uses (`UnixNet.cc:54-56`) with it; they must become non-anonymous-namespace members or file-scope statics in the header — put them inside the class as `static inline DbgCtl` members to avoid one instance per translation unit.
+
+**Step 2: Inject the NetHandler instead of fetching it from the thread**
+
+The cop currently calls `get_NetHandler(this_ethread())`, which requires `unix_netProcessor.netHandler_offset` — i.e. a started net processor. That is the one thing a benchmark cannot cheaply provide. Take the handler at construction instead:
+
+```cpp
+class InactivityCop : public Continuation
+{
+public:
+  InactivityCop(Ptr<ProxyMutex> &m, NetHandler &nh) : Continuation(m.get()), _nh(nh)
+  {
+    SET_HANDLER(&InactivityCop::check_inactivity);
+  }
+
+  int check_inactivity(int event, Event *e);
+
+private:
+  NetHandler &_nh;
+};
+```
+
+and in `check_inactivity` replace `NetHandler &nh = *get_NetHandler(this_ethread());` with a use of `_nh`. This is behavior-preserving: `initialize_thread_for_net` already constructs one cop per thread from that same thread's `NetHandler` (`UnixNet.cc:187`), and the cop only ever runs on that thread, so `get_NetHandler(this_ethread())` returns exactly `_nh` today. Keep every other use of `this_ethread()` (the `MUTEX_TRY_LOCK` and the `Dbg` thread id) as it is.
+
+Update the construction site:
+
+```cpp
+  InactivityCop *inactivityCop = new InactivityCop(nh->mutex, *nh);
+```
+
+**Step 3: Build and prove nothing changed**
+
+```bash
+cmake --build build-mydev --target traffic_server test_net
+```
+
+Ask the user to run the full timeout suite — this is pure motion, so it must be green before anything else happens:
+
+```bash
+cd /Users/cmcfarlen/projects/oss/trafficserver/.claude/worktrees/inactivity-cop-refactor/build-mydev/tests
+./autest.sh --sandbox /tmp/sb-cop --clean=none -f timeout
+```
+
+Expected: PASS.
+
+**Step 4: Commit**
+
+```bash
+cmake --build build-mydev --target format
+git add src/iocore/net/P_InactivityCop.h
+git add -u
+git commit -m "Extract InactivityCop to a header and inject its NetHandler
+
+Fetching the handler via get_NetHandler(this_ethread()) required a started
+net processor, which put the cop out of reach of a benchmark. The cop is
+already constructed per thread from that thread's handler, so taking it by
+reference is behavior preserving."
+```
+
+### Task B2: Mock NetEvent and the scenario harness
+
+**Files:**
+- Create: `src/iocore/net/unit_tests/benchmark_InactivityCop.cc`
+- Modify: `src/iocore/net/CMakeLists.txt:145-155` (add to the `test_net` source list)
+
+**Step 1: Write the mock**
+
+`NetEvent` has twelve pure virtuals (`include/iocore/net/NetEvent.h:57-83`), all trivial to stub. Give the mock a real `ProxyMutex` so lock costs are real, and pad it to the size of the real thing:
+
+```cpp
+class MockNetEvent : public NetEvent
+{
+public:
+  MockNetEvent(EThread *t) : _thread(t) { _mutex = new_ProxyMutex(); }
+
+  void net_read_io(NetHandler *) override {}
+  void net_write_io(NetHandler *) override {}
+  void free_thread(EThread *) override {}
+
+  int
+  callback(int event, void *) override
+  {
+    _last_event = event;
+    ++fired;
+    return EVENT_DONE;
+  }
+
+  void
+  set_inactivity_timeout(ink_hrtime timeout_in) override
+  {
+    inactivity_timeout_in      = timeout_in;
+    next_inactivity_timeout_at = (timeout_in > 0) ? ink_get_hrtime() + timeout_in : 0;
+  }
+
+  void
+  set_default_inactivity_timeout(ink_hrtime timeout_in) override
+  {
+    default_inactivity_timeout_in = timeout_in;
+  }
+
+  bool
+  is_default_inactivity_timeout() override
+  {
+    return use_default_inactivity_timeout && inactivity_timeout_in == 0;
+  }
+
+  EThread *get_thread() override { return _thread; }
+  int      close() override { return 0; }
+  int      get_fd() override { return -1; }
+
+  Ptr<ProxyMutex> &get_mutex() override { return _mutex; }
+  ContFlags       &get_control_flags() override { return _flags; }
+
+  int fired = 0;
+
+private:
+  EThread        *_thread = nullptr;
+  Ptr<ProxyMutex> _mutex;
+  ContFlags       _flags;
+  int             _last_event = 0;
+};
+
+// Trap 3: match the real object's footprint so the sweep pays realistic cache
+// costs. Include P_UnixNetVConnection.h for the size.
+struct PaddedMock : public MockNetEvent {
+  using MockNetEvent::MockNetEvent;
+  char _pad[sizeof(UnixNetVConnection) > sizeof(MockNetEvent) ? sizeof(UnixNetVConnection) - sizeof(MockNetEvent) : 1];
+};
+```
+
+Have the benchmark print `sizeof(MockNetEvent)`, `sizeof(PaddedMock)` and `sizeof(UnixNetVConnection)` on startup so the padding stays honest as the classes drift.
+
+**Step 2: Write the fixture**
+
+A fixture that stands up a `NetHandler` without a net processor:
+
+```cpp
+struct CopFixture {
+  EThread                    *thread = this_ethread();
+  NetHandler                  nh;
+  std::vector<PaddedMock *>   conns;
+  std::unique_ptr<InactivityCop> cop;
+
+  CopFixture()
+  {
+    // Trap 1: these are null under test_net; the cop increments them.
+    net_rsb.inactivity_cop_lock_acquire_failure =
+      Metrics::Counter::createPtr("proxy.process.net.inactivity_cop_lock_acquire_failure");
+    net_rsb.default_inactivity_timeout_applied =
+      Metrics::Counter::createPtr("proxy.process.net.default_inactivity_timeout_applied");
+    net_rsb.default_inactivity_timeout_count =
+      Metrics::Counter::createPtr("proxy.process.net.default_inactivity_timeout_count");
+    net_rsb.keep_alive_queue_timeout_count =
+      Metrics::Counter::createPtr("proxy.process.net.dynamic_keep_alive_timeout_in_count");
+    net_rsb.keep_alive_queue_timeout_total =
+      Metrics::Counter::createPtr("proxy.process.net.dynamic_keep_alive_timeout_in_total");
+
+    nh.mutex  = new_ProxyMutex();
+    nh.thread = thread;
+    // Trap 2: never call configure_per_thread_values(); zeros make the queue
+    // managers early-return so they stay out of the measurement.
+    nh.config.max_connections_in         = 0;
+    nh.config.max_requests_in            = 0;
+    nh.config.default_inactivity_timeout = 30;
+
+    cop = std::make_unique<InactivityCop>(nh.mutex, nh);
+  }
+
+  /// Add n connections, each with `deadline_in` until its inactivity deadline.
+  /// Insertion order is shuffled so list order differs from allocation order.
+  void populate(int n, ink_hrtime deadline_in);
+
+  /// One cop run. Returns wall time in ns.
+  int64_t run_once();
+};
+```
+
+`run_once()` needs an `Event` to hand to `check_inactivity`. A stack `Event` is enough and there is precedent at `src/iocore/net/NetHandler.cc:508-510`:
+
+```cpp
+int64_t
+CopFixture::run_once()
+{
+  Event e;
+  e.ethread = thread;
+
+  SCOPED_MUTEX_LOCK(lock, nh.mutex, thread); // the cop runs under this lock in production
+
+  ink_hrtime const start = ink_get_hrtime();
+  cop->check_inactivity(EVENT_INTERVAL, &e);
+  return ink_hrtime_to_nsec(ink_get_hrtime() - start);
+}
+```
+
+**Step 3: Report visits, not just wall time**
+
+Wall time is machine- and build-dependent. The hardware-independent number that makes the regression legible is **NetEvents visited per run** — which is exactly what Task 12's `inactivity_cop_visited` metric will report in production, so benchmark and production agree. Until Task 12 lands, count it in the harness by reading `nh.open_list` length and the cop's behavior; after Task 12, read the metric directly. Report per scenario:
+
+- visited per run (mean) — the primary number
+- wall time per run: mean and p99 over the sample
+- timeouts fired per run (a correctness sanity check: the scenarios below have known expected values)
+
+**Step 4: Implement the scenarios**
+
+Deadlines are set relative to real `ink_get_hrtime()`; no fake clock is needed because these measure cost, not correctness.
+
+| Scenario | Setup | What it isolates |
+|---|---|---|
+| `idle` | N conns, deadline `now + 1h`, no activity | The pathological case: O(N) work for zero timeouts. The headline number. |
+| `keepalive` | N conns, 30s timeout, all marked triggered each tick | Steady state, including the `cop_list` removal path in `ReadWriteEventIO` |
+| `mass_expiry` | N conns all with deadline `now - 1s` | Single-run tail latency; after the wheel, budget behavior |
+| `churn` | N conns, 1% expiring per tick | Realistic mixed load |
+| `lock_contention` | N conns, 10% of their mutexes held by a second thread | The try-lock-failure path — Task 2's win, and the wheel's must-reschedule-on-lock-failure rule |
+
+Run each at N = 1k, 10k, 100k so the scaling curve is visible; the whole argument is about how cost grows with N.
+
+Use the `[!benchmark]` tag so normal `ctest` runs skip these:
+
+```cpp
+TEST_CASE("InactivityCop: idle connections", "[!benchmark][net][inactivity_cop]")
+```
+
+**Step 5: Build and run**
+
+```bash
+cmake --build build-mydev --target test_net
+./build-mydev/src/iocore/net/test_net "[inactivity_cop]"
+```
+
+Expected: runs, prints per-scenario numbers. If it crashes in `Metrics::Counter::increment`, trap 1 was missed; if it dies in `configure_per_thread_values`, trap 2 was missed.
+
+**Step 6: Commit**
+
+```bash
+cmake --build build-mydev --target format
+git add src/iocore/net/unit_tests/benchmark_InactivityCop.cc src/iocore/net/CMakeLists.txt
+git commit -m "Add an isolated InactivityCop benchmark
+
+Drives the real cop against mock NetEvents on the test_net Catch2 thread,
+so timeout dispatch cost can be measured at high connection counts without
+a load generator."
+```
+
+### Task B3: Record the baseline
+
+**Files:**
+- Create: `docs/plans/inactivity-cop-benchmark-results.md`
+
+**Step 1: Build a RelWithDebInfo directory for quotable numbers**
+
+```bash
+cmake --preset mydev -B build-bench -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-bench --target test_net
+./build-bench/src/iocore/net/test_net "[inactivity_cop]"
+```
+
+**Step 2: Write the results file**
+
+Start with a header recording machine, OS, compiler, preset, build type, and commit SHA, then a table per scenario and N. Leave a clearly marked section per phase to be appended later.
+
+**Step 3: Commit**
+
+```bash
+git add docs/plans/inactivity-cop-benchmark-results.md
+git commit -m "Record InactivityCop baseline measurements"
+```
+
+### When to re-run
+
+Re-run `./build-bench/src/iocore/net/test_net "[inactivity_cop]"` and append a row at each of these points, always in the same build directory and build type:
+
+- **after Task 3** (end of Phase 1) — expect the `lock_contention` and `idle` wall times to improve, with visits unchanged
+- **after Task 10** (the switchover) — expect `idle` visits to collapse by roughly the timeout/tick ratio
+- **after Task 11** (dead sweep machinery removed)
+- **before opening the PR** — final numbers from a clean build
+
+Expected shape, to be confirmed rather than assumed: Phase 1 reduces cost *per visit*; the wheel reduces the *number of visits*. Only the second is an asymptotic change. If `idle` visits do not collapse after Task 10, the wheel is being defeated by something re-arming every tick — check that `netActivity()` was left alone.
 
 ---
 
@@ -701,45 +1016,38 @@ git add -u
 git commit -m "Cover timer wheel rearm, cancel, wraparound, and budget"
 ```
 
-### Task 7: Benchmark the wheel against the equivalent sweep
+### Task 7: Pick N_BUCKETS with evidence
 
-Establishes the claim quantitatively before touching the net code, at the data-structure level where it can be measured without a load generator.
+The cop benchmark from Task B2 covers the end-to-end claim, so do **not** rebuild a wheel-vs-sweep comparison here. What is still unjustified is the `N_BUCKETS = 1024` constant, which trades memory against how often long deadlines get re-inserted. This task is a cheap sweep of that one parameter, in `test_tscore`, where it does not require rebuilding `traffic_server`.
 
 **Files:**
-- Create: `tools/benchmark/benchmark_TimerWheel.cc`
-- Modify: `tools/benchmark/CMakeLists.txt`
+- Modify: `src/tscore/unit_tests/test_TimerWheel.cc`
 
-**Step 1: Read an existing benchmark for the pattern**
+**Step 1: Add a tagged benchmark case**
 
-```bash
-sed -n '1,60p' tools/benchmark/benchmark_FreeList.cc
-cat tools/benchmark/CMakeLists.txt
-```
+Using the `[!benchmark]` tag so it stays out of normal `ctest` runs, measure total elements visited across 3600 simulated ticks for N = 100,000 elements, at the timeout durations that matter in production — 30s (default keepalive), 120s, and 4h (tunnel active timeout) — for wheel sizes 256, 512, 1024, and 4096.
 
-**Step 2: Write a benchmark** comparing, at N = 100,000 elements with a 30s timeout and 1s ticks over 60 simulated seconds:
-- the wheel: total elements visited across all `expire()` calls;
-- the current algorithm: a full N-element sweep per tick.
+Since `N_BUCKETS` is a compile-time constant on the class, either template the test over a few explicit instantiations or add a second template parameter defaulted to 1024. Prefer the latter only if it does not complicate the production call site; otherwise a handful of explicit sizes in the test is fine.
 
-Report visited-element counts (the cache-miss proxy) and wall time for both. The expected shape is ~30x fewer visits for a 30s timeout, improving with longer timeouts.
-
-**Step 3: Build and run**
+**Step 2: Run**
 
 ```bash
-cmake --preset mydev -B build-mydev -DENABLE_BENCHMARKS=ON
-cmake --build build-mydev --target benchmark_TimerWheel
-./build-mydev/tools/benchmark/benchmark_TimerWheel
+cmake --build build-mydev --target test_tscore
+./build-mydev/src/tscore/test_tscore "[!benchmark][TimerWheel]"
 ```
 
-Expected: wheel visits far fewer elements. **Record the numbers in the commit message** — this is the evidence for the whole refactor.
+**Step 3: Decide and record**
+
+Expected shape: visits per element per timeout period is ~1 once the wheel range exceeds the timeout, and grows as `timeout / range` when it does not. Memory is `N_BUCKETS * 8` bytes per net thread. Pick the smallest size where the 4h case is not re-inserting excessively, update the constant if 1024 is wrong, and record the table in the commit message.
 
 **Step 4: Commit**
 
 ```bash
 cmake --build build-mydev --target format
-git add tools/benchmark/benchmark_TimerWheel.cc tools/benchmark/CMakeLists.txt
-git commit -m "Add a timer wheel vs full-sweep benchmark
+git add -u
+git commit -m "Size the timer wheel with measurements
 
-<paste the measured numbers here>"
+<paste the visits-per-wheel-size table here>"
 ```
 
 ---
@@ -1138,23 +1446,26 @@ git commit -m "Document the inactivity timeout wheel design"
 
 ## Validation before this becomes a PR
 
-Unit tests and autests confirm *correctness*; they do not confirm the *performance* claim, which is the entire point. State plainly which of these were actually run.
+Unit tests and autests confirm *correctness*; the benchmark confirms the *performance* claim. State plainly which of these were actually run.
 
 1. **Unit tests:** `ctest --test-dir build-mydev -R "test_tscore|test_net"` — expect PASS. Full `ctest` has 5 known pre-existing macOS failures (`ts::Random` dlopen, jsonrpcserver socket); 163/168 is green on macOS.
 2. **The whole timeout suite:** `-f timeout` — this is the real correctness gate.
 3. **A broader autest run** for fallout beyond timeouts, since every connection now goes through `rearm_timer`: at minimum `-f keep_alive`, `-f h2`, `-f connect`.
-4. **A high-connection-count load test** — the user's to run, since it needs their environment. The claim to check: `inactivity_cop_visited` per second should drop by roughly the ratio of the timeout duration to the tick (~30x for a 30s keepalive), and the once-per-second latency spike in the per-thread io stats should flatten. Compare against the same build with the wheel replaced by the old sweep, at the same connection count.
-5. **Sanitizers.** The wheel is intrusive and hand-linked, so a bookkeeping bug is a use-after-free rather than a wrong answer. Run the timeout suite under the `myasan` preset before opening the PR:
+4. **The cop benchmark**, final run from a clean `RelWithDebInfo` build, appended to `docs/plans/inactivity-cop-benchmark-results.md` with the baseline row still visible for comparison. The headline claim to state in the PR: `idle` visits per run at N=100k, before and after.
+5. **A high-connection-count load test with real traffic** — the user's to run, since it needs their environment. The benchmark isolates the cop but cannot show what the change is worth end to end. The claim to check: `inactivity_cop_visited` per second should drop by roughly the ratio of the timeout duration to the tick (~30x for a 30s keepalive), and the once-per-second latency spike in the per-thread io stats should flatten.
+6. **Sanitizers.** The wheel is intrusive and hand-linked, so a bookkeeping bug is a use-after-free rather than a wrong answer. Run the timeout suite *and* the benchmark under the `myasan` preset before opening the PR — the benchmark is the cheapest way to get 100k NetEvents through the wheel under ASan:
 
 ```bash
 cp /Users/cmcfarlen/projects/oss/trafficserver/CMakeUserPresets.json .
 cmake --preset myasan
-cmake --build build-mydev-asan --target traffic_server
+cmake --build build-mydev-asan --target traffic_server test_net
+./build-mydev-asan/src/iocore/net/test_net "[inactivity_cop]"
 ```
 
 ## PR notes
 
 - Branch is `worktree-inactivity-cop-refactor`; PR targets `master`.
-- Phase 1 (Tasks 2-3) is independently valuable and could ship as its own PR if the wheel needs more review time.
+- Order the PR's commits so reviewers see Task B1 first — it is pure motion plus dependency injection, and reading it first makes the rest of the diff much smaller than it looks.
+- Phase 1 (Tasks 2-3) is independently valuable and could ship as its own PR if the wheel needs more review time. The benchmark (B1-B3) would go with it, since it is what justifies both.
 - Label: this changes timeout dispatch timing at the margins. Not **Incompatible** — the observable semantics and all config keys are unchanged — but it deserves a careful reviewer and should not be backported to a release branch without load-test evidence.
 - Reference TS-4612 (`425b696240`, `5b7aabccae`) in the PR description as the previous attempt at this problem, and explain that this replaces its `cop_list` mechanism rather than extending it.
