@@ -337,25 +337,81 @@ Carried forward honestly; these apply to every checkpoint in this file.
 
 # Checkpoint 1 — after Phase 1 (deadline check before lock, eager default timeout)
 
-_Not yet run._
-
 Expected: `get_mutex/run` falls well below N in scenarios where few connections
 are due (`idle`, `keepalive`, `churn`); `get_thread/run` still equals N, because
 the `open_list` walk is untouched at this stage. `mass_expiry` and
 `lock_contention` should both stay at `get_mutex/run == N` by construction —
 every connection in them is due, so every one of them must be locked.
 
+**Outcome: as expected, on every count.**
+
 | | |
 | --- | --- |
-| commit | |
-| build type | |
-| date | |
+| commit | `17cd32cc0f` |
+| build type | RelWithDebInfo (`-O3 -g -DNDEBUG`), build-bench |
+| host | pebs.local (M4 Max), Apple clang 21.0.0 |
+| date | 2026-09-17 |
+| method | 3 independent runs, 25 samples each after 2 warm-up runs; figures below are the mean of the 3 per-run means |
 
-```
-(paste benchmark output here)
-```
+## Counter columns — the exact, hardware-independent signal
 
-Notes:
+| scenario | `get_mutex/run` baseline | `get_mutex/run` now | `get_thread/run` |
+| --- | --- | --- | --- |
+| `idle` | N | **0** | N (unchanged) |
+| `keepalive` | N | **0** | N (unchanged) |
+| `churn` | N | **N/100** (the 1% actually due) | N (unchanged) |
+| `mass_expiry` | N | N (by construction) | N (unchanged) |
+| `lock_contention` | N | N (by construction) | N (unchanged) |
+
+The cop no longer takes a single `ProxyMutex` for a connection that has nothing
+to do. `get_thread/run` is still exactly N in all fifteen rows, confirming the
+`open_list` refill walk is untouched — that is Checkpoint 2's job.
+
+## Wall time, mean_ms (RelWithDebInfo)
+
+| scenario | N | baseline | checkpoint 1 | change |
+| --- | --- | --- | --- | --- |
+| `idle` | 1000 | 0.0147 | 0.0096 | −35% |
+| `idle` | 10000 | 0.2044 | 0.1696 | −17% |
+| `idle` | 100000 | 13.7995 | 9.0687 | **−34%** |
+| `keepalive` | 1000 | 0.0228 | 0.0094 | −59% |
+| `keepalive` | 10000 | 0.2921 | 0.1726 | −41% |
+| `keepalive` | 100000 | 12.5313 | 7.8456 | **−37%** |
+| `churn` | 1000 | 0.0146 | 0.0102 | −30% |
+| `churn` | 10000 | 0.2128 | 0.1742 | −18% |
+| `churn` | 100000 | 13.1699 | 9.6964 | −26% |
+| `mass_expiry` | 1000 | 0.0154 | 0.0153 | ~0% |
+| `mass_expiry` | 10000 | 0.2127 | 0.1991 | −6% |
+| `mass_expiry` | 100000 | 14.0547 | 15.9492 | **+13%** — see below |
+
+`lock_contention` is omitted: it was rebaselined at `8f93ff6715` and its
+pre-`8f93ff6715` rows measure a different workload. For the record, its
+Checkpoint 1 figure is 15.97 ms at N=100000.
+
+## The one regression: `mass_expiry` got slightly slower
+
+`mass_expiry` at N=100000 came in at 15.67 / 16.06 / 16.12 ms across the three
+runs, consistently above the 14.05 ms baseline. This is expected and is the
+honest cost of the change: when *every* connection is due, the pre-check is pure
+overhead — it performs the unlocked reads and then the locked body re-reads the
+same fields and does the work anyway. Nothing is saved and a few loads per
+connection are added.
+
+The magnitude (+13%) is at the edge of the documented noise floor, so treat it as
+directional rather than precise. It is the correct trade: the pathological case
+this refactor targets is many idle connections, where the saving is 34-37%, and
+the all-expiring case is both rare and already dominated by the callback work.
+Worth re-checking after the timer wheel lands, since the wheel changes which
+connections are examined at all.
+
+## Notes
+
+- No production behavior changed: the pre-check is a proven superset of the
+  conditions the locked body acts on, and the locked body is byte-identical to
+  its pre-Phase-1 form.
+- The `AuTest` timeout suite (`tests/gold_tests/timeout/`) has **not** been run
+  against these commits and remains the real regression gate, particularly
+  `default_inactivity_timeout.test.py` for the eager-default change.
 
 ---
 
