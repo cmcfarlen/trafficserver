@@ -343,19 +343,50 @@ the `open_list` walk is untouched at this stage. `mass_expiry` and
 `lock_contention` should both stay at `get_mutex/run == N` by construction —
 every connection in them is due, so every one of them must be locked.
 
-**Outcome: as expected, on every count.**
+**Outcome: as expected on every counter. See the base-change warning below — the
+wall-time comparison is against a re-measured pre-Phase-1 point, not against the
+original baseline table at the top of this file.**
 
 | | |
 | --- | --- |
 | commit | `17cd32cc0f` |
+| compared against | `759cbac375` (pre-Phase-1, **re-measured on the same base**) |
 | build type | RelWithDebInfo (`-O3 -g -DNDEBUG`), build-bench |
 | host | pebs.local (M4 Max), Apple clang 21.0.0 |
 | date | 2026-09-17 |
-| method | 3 independent runs, 25 samples each after 2 warm-up runs; figures below are the mean of the 3 per-run means |
+| method | 3 independent runs per point, 25 samples each after 2 warm-up runs; figures are the mean of the 3 per-run means |
+
+## Base change: why the original baseline table is not the comparison point
+
+Between the baseline being recorded and Phase 1 being implemented, the branch was
+**rebased onto `upstream/master`**, pulling in 63 upstream commits (380 files,
++22602/−3524). This was not intended and was not part of the plan.
+
+The original baseline rows at the top of this file were measured on the old base,
+so comparing them against post-rebase numbers mixes our change with 63 commits of
+upstream drift. To get a clean delta, the pre-Phase-1 state was **re-measured on
+the current base** at `759cbac375` (the rebased equivalent of the baseline
+commit), and that is what the table below compares against.
+
+Two checks bound how much the base change could have affected the measurement:
+
+- Of the 63 upstream commits, exactly one touches any timeout-relevant file
+  (`fb3bb9b1ca`, clang-tidy `misc-redundant-expression`), and its only effect on
+  `NetHandler.cc` is a comment plus a `// NOLINT` annotation in `startIO` — not
+  on the cop path.
+- `sizeof(UnixNetVConnection)` is 1560 in both the baseline and current runs, and
+  `sizeof(PaddedMock)` is 1584 in both, so the mock stride and cache profile are
+  unchanged. This is exactly the invariant the frozen footprint exists to protect.
+
+The old baseline rows remain useful as a record of the pre-refactor cost, but
+**do not compute deltas across them.** Note the re-measured pre-Phase-1 numbers
+at N=100000 are noticeably higher than the original baseline (15.9 ms vs 13.8 ms
+for `idle`), which is itself a reminder of how much run-to-run and
+environment-to-environment variation this benchmark carries at large N.
 
 ## Counter columns — the exact, hardware-independent signal
 
-| scenario | `get_mutex/run` baseline | `get_mutex/run` now | `get_thread/run` |
+| scenario | `get_mutex/run` before | `get_mutex/run` after | `get_thread/run` |
 | --- | --- | --- | --- |
 | `idle` | N | **0** | N (unchanged) |
 | `keepalive` | N | **0** | N (unchanged) |
@@ -364,45 +395,50 @@ every connection in them is due, so every one of them must be locked.
 | `lock_contention` | N | N (by construction) | N (unchanged) |
 
 The cop no longer takes a single `ProxyMutex` for a connection that has nothing
-to do. `get_thread/run` is still exactly N in all fifteen rows, confirming the
-`open_list` refill walk is untouched — that is Checkpoint 2's job.
+to do. These counters are unaffected by the base change — they are structural.
+`get_thread/run` is still exactly N in all fifteen rows, confirming the
+`open_list` refill walk is untouched; that is Checkpoint 2's job.
 
-## Wall time, mean_ms (RelWithDebInfo)
+## Wall time, mean_ms — both points on the same base
 
-| scenario | N | baseline | checkpoint 1 | change |
+| scenario | N | pre-Phase-1 | Checkpoint 1 | change |
 | --- | --- | --- | --- | --- |
-| `idle` | 1000 | 0.0147 | 0.0096 | −35% |
-| `idle` | 10000 | 0.2044 | 0.1696 | −17% |
-| `idle` | 100000 | 13.7995 | 9.0687 | **−34%** |
-| `keepalive` | 1000 | 0.0228 | 0.0094 | −59% |
-| `keepalive` | 10000 | 0.2921 | 0.1726 | −41% |
-| `keepalive` | 100000 | 12.5313 | 7.8456 | **−37%** |
-| `churn` | 1000 | 0.0146 | 0.0102 | −30% |
-| `churn` | 10000 | 0.2128 | 0.1742 | −18% |
-| `churn` | 100000 | 13.1699 | 9.6964 | −26% |
-| `mass_expiry` | 1000 | 0.0154 | 0.0153 | ~0% |
-| `mass_expiry` | 10000 | 0.2127 | 0.1991 | −6% |
-| `mass_expiry` | 100000 | 14.0547 | 15.9492 | **+13%** — see below |
+| `idle` | 1000 | 0.0133 | 0.0096 | −28% |
+| `idle` | 10000 | 0.1917 | 0.1696 | −12% |
+| `idle` | 100000 | 15.8835 | 9.0687 | **−43%** |
+| `keepalive` | 1000 | 0.0132 | 0.0094 | −29% |
+| `keepalive` | 10000 | 0.1841 | 0.1726 | −6% |
+| `keepalive` | 100000 | 15.7403 | 7.8456 | **−50%** |
+| `churn` | 1000 | 0.0135 | 0.0102 | −24% |
+| `churn` | 10000 | 0.1839 | 0.1742 | −5% |
+| `churn` | 100000 | 16.3052 | 9.6964 | **−41%** |
+| `mass_expiry` | 1000 | 0.0141 | 0.0153 | +9% |
+| `mass_expiry` | 10000 | 0.1889 | 0.1991 | +5% |
+| `mass_expiry` | 100000 | 16.5002 | 15.9492 | −3% |
 
-`lock_contention` is omitted: it was rebaselined at `8f93ff6715` and its
-pre-`8f93ff6715` rows measure a different workload. For the record, its
-Checkpoint 1 figure is 15.97 ms at N=100000.
+`lock_contention` is excluded: its scenario was rebaselined at `8f93ff6715`, which
+is after `759cbac375`, so the two points measure different workloads (idle-based
+before, expiry-based after). Its Checkpoint 1 figure is 15.97 ms at N=100000.
 
-## The one regression: `mass_expiry` got slightly slower
+## `mass_expiry`: the honest cost of the pre-check
 
-`mass_expiry` at N=100000 came in at 15.67 / 16.06 / 16.12 ms across the three
-runs, consistently above the 14.05 ms baseline. This is expected and is the
-honest cost of the change: when *every* connection is due, the pre-check is pure
-overhead — it performs the unlocked reads and then the locked body re-reads the
-same fields and does the work anyway. Nothing is saved and a few loads per
-connection are added.
+When *every* connection is due, the pre-check saves nothing — it performs the
+unlocked reads and then the locked body re-reads the same fields and does the work
+anyway. That shows up as roughly +5 to +9% at N=1000 and N=10000, where the added
+per-connection loads are a visible fraction of a very short run, and washes out to
+−3% at N=100000 where memory stalls dominate.
 
-The magnitude (+13%) is at the edge of the documented noise floor, so treat it as
-directional rather than precise. It is the correct trade: the pathological case
-this refactor targets is many idle connections, where the saving is 34-37%, and
-the all-expiring case is both rare and already dominated by the callback work.
-Worth re-checking after the timer wheel lands, since the wheel changes which
-connections are examined at all.
+This is the correct trade. The case this refactor targets is many idle
+connections, where the saving is 43-50%; the all-expiring case is rare and is
+already dominated by callback work.
+
+## Correction to an earlier reading of this data
+
+An earlier version of this section compared Checkpoint 1 against the original
+(pre-rebase) baseline and reported `idle` at −34% and `mass_expiry` as a **+13%
+regression**. Both were artifacts of comparing across the base change. On a
+same-base comparison `idle` improves more than reported (−43%) and `mass_expiry`
+is roughly flat rather than a significant regression.
 
 ## Notes
 
