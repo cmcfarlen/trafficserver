@@ -41,6 +41,11 @@ Five scenarios run at N = 1000, 10000, 100000:
 | `churn` | 1% of connections expire per run |
 | `lock_contention` | 10% of mutex acquisitions fail, exercising the retry path |
 
+> **`lock_contention` was rebaselined at commit `8f93ff6715`.** It originally used idle connections, whose mutexes the cop happened to lock incidentally. Once the cop stopped locking connections with nothing to do, that scenario recorded zero lock failures and no longer exercised the path it is named for, so its setup was switched to already-expired connections (the same helper `mass_expiry` uses) — the cop must now lock every one of them to fire the timeout, and the exact-equality assertion on the held 10% still holds.
+>
+> **The `lock_contention` rows recorded below are therefore not comparable to any run after `8f93ff6715`.** The workload changed, not just the code: the old rows show `cb/run = 0`, the new scenario fires ~90% of N as callbacks. Do not read the drop from 14.39 ms to ~12.17 ms at N=100,000 as an improvement — it is a different measurement. Every other scenario remains directly comparable.
+
+
 The counter columns are instrumentation on the cop itself:
 
 - `get_mutex/run` — mutex acquisitions attempted per `check_inactivity()` call.
@@ -335,8 +340,10 @@ Carried forward honestly; these apply to every checkpoint in this file.
 _Not yet run._
 
 Expected: `get_mutex/run` falls well below N in scenarios where few connections
-are due (`idle`, `churn`, `lock_contention`); `get_thread/run` still equals N,
-because the `open_list` walk is untouched at this stage.
+are due (`idle`, `keepalive`, `churn`); `get_thread/run` still equals N, because
+the `open_list` walk is untouched at this stage. `mass_expiry` and
+`lock_contention` should both stay at `get_mutex/run == N` by construction —
+every connection in them is due, so every one of them must be locked.
 
 | | |
 | --- | --- |
