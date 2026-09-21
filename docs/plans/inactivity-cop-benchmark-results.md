@@ -655,3 +655,51 @@ From a clean build. These are the numbers that go in the PR description.
 ```
 
 Notes:
+
+---
+
+# Appendix — TimerWheel bucket-count sizing sweep
+
+A separate, one-off measurement of the wheel **primitive**, not of the cop. It
+does not belong in the entry sequence above (different benchmark, different
+units) but is recorded here so it is findable.
+
+Landed in `36c3cf8b87`. Benchmark:
+`./build-bench/src/tscore/test_tscore '[!benchmark][TimerWheel]'`.
+100,000 continuously re-arming elements, 3600 simulated one-second ticks, seed
+`0xBEEF`, build-bench (RelWithDebInfo). "Visits" are counted by instrumenting
+`deadline_of()`, which the wheel calls exactly once per element popped — on a
+genuine fire and on a clamp-driven lazy rearm alike. The counts are exact and
+build-independent.
+
+| buckets | timeout | total visits | visits/elem/period | mem/wheel | x32 threads |
+| --- | --- | --- | --- | --- | --- |
+| 256 | 30 s | 12,000,000 | 1.00 | 2 KiB | 64 KiB |
+| 256 | 120 s | 3,000,000 | 1.00 | 2 KiB | 64 KiB |
+| 256 | 4 h | 1,403,140 | 56.13 | 2 KiB | 64 KiB |
+| 512 | 30 s | 12,000,000 | 1.00 | 4 KiB | 128 KiB |
+| 512 | 120 s | 3,000,000 | 1.00 | 4 KiB | 128 KiB |
+| 512 | 4 h | 701,306 | 28.05 | 4 KiB | 128 KiB |
+| 1024 | 30 s | 12,000,000 | 1.00 | 8 KiB | 256 KiB |
+| 1024 | 120 s | 3,000,000 | 1.00 | 8 KiB | 256 KiB |
+| 1024 | 4 h | 314,857 | 12.59 | 8 KiB | 256 KiB |
+| **4096** | 30 s | 12,000,000 | 1.00 | 32 KiB | 1 MiB |
+| **4096** | 120 s | 3,000,000 | 1.00 | 32 KiB | 1 MiB |
+| **4096** | 4 h | 25,183 | 1.01 | 32 KiB | 1 MiB |
+
+**Conclusion: default raised from 1024 to 4096.** Every candidate size already
+exceeds the 30 s and 120 s timeouts, so those rows are flat at exactly 1.00
+visits per element per period — the dominant keepalive case is indifferent to
+bucket count. The constant only matters for multi-hour timeouts (tunnel active
+timeouts), where 1024 imposes real re-insertion churn for no offsetting benefit,
+at a memory cost that is negligible either way.
+
+**Caveat on the 4 h row.** A 1-hour observation window is shorter than a 4-hour
+timeout, so for the larger rings most elements never complete a revisit cycle
+and this table *understates* their steady-state churn. Longer windows
+(14400/57600/144000 ticks, same seed) converge to ~14.9 visits/elem/period at
+1024 and ~4.0 at 4096. The ranking and the decision are unaffected; the 1.01
+figure in the 4096 row specifically should not be quoted as steady state.
+
+The bucket count is now a template parameter, `TimerWheel<C, Buckets = 4096, L>`,
+so re-running this sweep does not require editing the header.

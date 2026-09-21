@@ -598,7 +598,15 @@ Slot arithmetic, and the two aliasing traps that will otherwise cause an infinit
 - While draining the bucket at tick `T`, a re-inserted element must land in a bucket **other than `T`**. So all scheduling takes a `floor_tick` and clamps the result into `[floor_tick, floor_tick + N_BUCKETS - 2]`. During a drain of `T` the caller passes `floor_tick = T + 1`, giving a max tick of `T + N_BUCKETS - 1` — and never `T + N_BUCKETS`, which would alias back onto `T`.
 - Hence the usable range is `N_BUCKETS - 1` ticks, not `N_BUCKETS`.
 
-With `N_BUCKETS = 1024` the range is ~17 minutes at 8 KB per NetHandler. Deadlines beyond it (long tunnel active timeouts) are clamped and re-inserted on arrival: a 4-hour timeout is touched ~14 times total instead of 14,400.
+**Measured and settled (Task 7):** `N_BUCKETS = 4096`, giving a range of ~68
+minutes at 32 KiB per `NetHandler` (1 MiB across 32 ET_NET threads). Deadlines
+beyond the range are clamped and re-inserted on arrival. The sweep showed the
+dominant 30s/120s keepalive case costs exactly 1.0 visits per element per
+timeout period at *every* candidate size, so bucket count only matters for
+multi-hour timeouts: at 1024 a 4-hour tunnel timeout is revisited ~14.9 times
+per period, at 4096 only ~4.0. Memory is negligible either way, so the larger
+ring is strictly better. Note the implementation now takes the count as a
+template parameter, `TimerWheel<C, Buckets = 4096, L>`.
 
 ### Task 4: Write the failing test for schedule/expire
 
@@ -1030,7 +1038,22 @@ git add -u
 git commit -m "Cover timer wheel rearm, cancel, wraparound, and budget"
 ```
 
-### Task 7: Pick N_BUCKETS with evidence
+### Task 7: Pick N_BUCKETS with evidence — **DONE**
+
+Landed in `36c3cf8b87`. The sweep (100,000 elements, 3600 simulated ticks, sizes
+256/512/1024/4096 × timeouts 30s/120s/4h) showed the 30s and 120s rows flat at
+exactly 1.0 visits per element per period at every size, so the constant only
+matters for multi-hour timeouts. The default was raised from 1024 to **4096**;
+full table is in the commit message and in the benchmark log's appendix.
+
+Two things worth carrying forward: the bucket count is now a template parameter
+(`TimerWheel<C, Buckets = 4096, L>`), and a 1-hour observation window
+*understates* the 4h row for the larger rings because most elements have not
+completed a revisit cycle — the converged figures (~14.9 revisits at 1024, ~4.0
+at 4096) came from longer windows.
+
+<details>
+<summary>Original task brief, kept for reference</summary>
 
 The cop benchmark from Task B2 covers the end-to-end claim, so do **not** rebuild a wheel-vs-sweep comparison here. What is still unjustified is the `N_BUCKETS = 1024` constant, which trades memory against how often long deadlines get re-inserted. This task is a cheap sweep of that one parameter, in `test_tscore`, where it does not require rebuilding `traffic_server`.
 
@@ -1063,6 +1086,8 @@ git commit -m "Size the timer wheel with measurements
 
 <paste the visits-per-wheel-size table here>"
 ```
+
+</details>
 
 ---
 
