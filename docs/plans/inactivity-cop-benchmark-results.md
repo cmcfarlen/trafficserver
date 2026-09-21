@@ -1,9 +1,80 @@
-# InactivityCop benchmark — baseline of record
+# InactivityCop benchmark — measurement log
 
-Baseline measurements taken immediately before the `InactivityCop` timer-wheel
-refactor. Four later checkpoints are appended to this file, so the tables and
-the reading instructions below need to stay interpretable by someone who has
-never seen this work.
+A running log of `InactivityCop` benchmark results across the timer-wheel
+refactor, with the code change that produced each entry. Append one entry per
+measured point; never edit an existing entry's numbers. The tables and reading
+instructions must stay interpretable by someone who has never seen this work.
+
+The plan this log tracks is
+[`2026-09-17-inactivity-cop-timer-wheel.md`](2026-09-17-inactivity-cop-timer-wheel.md).
+
+## Trajectory at a glance
+
+`idle` at N=100,000 is the headline scenario: many connections, none of them due,
+which is the case the refactor exists to fix. `get_mutex/run` and `get_thread/run`
+are exact counters with zero variance and are the primary signal; wall time is
+noisy and only comparable within a measurement session (see the rules below).
+
+| # | Point | Commit | `idle@100k` | `get_mutex/run` | `get_thread/run` | Change that produced it |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | Baseline (old base) | `e86884d264` | 13.80 ms | N | N | Unmodified cop. Reference only — measured on a base 63 upstream commits older than everything after it. |
+| 2 | Pre-Phase-1 (re-measured) | `759cbac375` | 15.88 ms | N | N | Same code as #1, re-measured on the current base. **This is the true reference for #3.** |
+| 3 | Checkpoint 1 — Phase 1 | `17cd32cc0f` | **9.07 ms** | **0** | N | Deadline pre-check before the lock; global default timeout applied at `startCop`. |
+| 4 | Checkpoint 2 — timer wheel | _pending_ | | | expect ≪ N | Wheel replaces the `open_list` refill walk. |
+| 5 | Checkpoint 3 — sweep removed | _pending_ | | | | `cop_list` and the TS-4612 epoll hook deleted. |
+| 6 | Checkpoint 4 — pre-PR | _pending_ | | | | Final run from a clean build. |
+
+## Rules that make entries comparable
+
+Learned the hard way; all three have already bitten this log once.
+
+1. **Counters are truth, wall time is an estimate.** `get_mutex/run`,
+   `get_thread/run`, `cb/run` and `lockfail/run` are exact and reproduce
+   byte-identically across machines and builds. Quote those. Wall-clock
+   percentages are supporting evidence.
+2. **Wall time is only comparable within a single measurement session.** Between
+   sessions on the same machine and the *same commit*, `idle@100k` has been
+   observed at 7.20 ms and 9.07 ms — a 26% gap, larger than the 5-15%
+   within-session noise floor. So: **when adding an entry, re-measure the
+   previous point back-to-back in the same session** rather than comparing
+   against a number recorded earlier in this file.
+3. **Record the base, and re-measure if it moved.** Entry 1 and entry 3 are
+   separated by 63 upstream commits because the branch was rebased mid-stream.
+   Deltas computed across that are meaningless. Entry 2 exists solely to give
+   entry 3 a same-base reference.
+
+Also: `MOCK_FOOTPRINT_BYTES` is frozen at 1584 deliberately. Do **not** update it
+to track `sizeof(UnixNetVConnection)` as the refactor changes that type — a
+changing mock stride would silently change the cache profile between entries.
+Confirm `sizeof(PaddedMock)` is still 1584 in each entry's `[sizes]` line.
+
+## How to add an entry
+
+```sh
+# 1. Measure the previous point on the current base, in this session.
+git checkout --quiet <previous-entry-commit>
+cmake --build build-bench --target test_net
+./build-bench/src/iocore/net/test_net '[inactivity_cop]'   # 3 times
+
+# 2. Return and measure the new point.
+git checkout --quiet <branch>
+cmake --build build-bench --target test_net
+./build-bench/src/iocore/net/test_net '[inactivity_cop]'   # 3 times
+```
+
+Then append a section with: commit, the commit it is compared against, build
+config, **what changed in the code since the previous entry**, the counter table,
+the wall-time table with deltas, and any scenario that stopped being comparable.
+Update the trajectory table above. If a scenario's *setup* changed, say so loudly
+— see the `lock_contention` rebaseline note below for the format.
+
+---
+
+# Entry 1 — Baseline (unmodified cop)
+
+Measured immediately before any change, on base `a2011c2fc4`.
+**Reference only: 63 upstream commits older than entries 2 onward.** Use entry 2
+as the pre-refactor comparison point.
 
 ## What is being measured, and why
 
@@ -279,6 +350,17 @@ means:
 - For anything subtler, rely on the counter columns, which are exact and have
   zero run-to-run variance.
 
+**Between-session variance is larger still, and this is the trap that matters.**
+The numbers above are three runs back-to-back in one session. Across *different*
+sessions on the same machine at the **same commit** (`17cd32cc0f`), `idle@100k`
+was measured at 7.20 ms in one session and 9.07 ms in another — a 26% gap with
+no code difference at all, well outside the within-session floor. Entry 1 vs
+entry 2 shows the same effect on identical cop code (13.80 vs 15.88 ms).
+
+Consequence: **never compare a fresh measurement against a number recorded
+earlier in this file.** Re-measure the previous point back-to-back in the same
+session. This is rule 2 at the top, and it is why entry 2 exists.
+
 ## How to read these numbers across checkpoints
 
 1. **Wall-clock columns (`mean_ms`, `min_ms`, `max_ms`, `ns/conn`) are only
@@ -335,7 +417,54 @@ Carried forward honestly; these apply to every checkpoint in this file.
 
 ---
 
-# Checkpoint 1 — after Phase 1 (deadline check before lock, eager default timeout)
+# Entry 2 — Pre-Phase-1, re-measured on the current base
+
+**Changes since entry 1: none to the cop.** Same source, different base. The
+branch was rebased onto `upstream/master`, pulling in 63 upstream commits
+(380 files, +22602/−3524). Exactly one of them touches a timeout-relevant file
+(`fb3bb9b1ca`, clang-tidy `misc-redundant-expression`), and its only effect on
+`NetHandler.cc` is a comment plus a `// NOLINT` in `startIO` — not the cop path.
+
+This entry exists so entry 3 has a same-base, same-session reference.
+
+| | |
+| --- | --- |
+| commit | `759cbac375` (rebased equivalent of entry 1's code) |
+| base | `40253538ba` |
+| build | RelWithDebInfo (`-O3 -g -DNDEBUG`), build-bench |
+| host | pebs.local (M4 Max), Apple clang 21.0.0 |
+| date | 2026-09-17 |
+| method | 3 runs, 25 samples each after 2 warm-up runs; mean of the per-run means |
+| sizes | `sizeof(PaddedMock)=1584`, live `sizeof(UnixNetVConnection)=1560` — unchanged from entry 1 |
+
+| scenario | N=1000 | N=10000 | N=100000 | `get_mutex/run` | `get_thread/run` |
+| --- | --- | --- | --- | --- | --- |
+| `idle` | 0.0133 | 0.1917 | 15.8835 | N | N |
+| `keepalive` | 0.0132 | 0.1841 | 15.7403 | N | N |
+| `churn` | 0.0135 | 0.1839 | 16.3052 | N | N |
+| `mass_expiry` | 0.0141 | 0.1889 | 16.5002 | N | N |
+| `lock_contention` | 0.0186 | 0.2289 | 16.4199 | N | N |
+
+Note this reads ~15% *slower* at N=100000 than entry 1 on identical cop code
+(15.88 vs 13.80 ms for `idle`). That gap is environmental, not a code change, and
+is the clearest single illustration of why rule 2 above exists.
+
+`lock_contention` here still uses the original idle-based setup; it was
+rebaselined later at `8f93ff6715`, so this row is not comparable to entry 3's.
+
+---
+
+# Entry 3 — Checkpoint 1, after Phase 1
+
+**Changes since entry 2**, both in `src/iocore/net/`:
+
+| Commit | Change |
+| --- | --- |
+| `8f93ff6715` | `P_InactivityCop.h`: a pre-check before `MUTEX_TRY_LOCK` that `continue`s when the locked body provably has nothing to do. It is a proven superset of the body's conditions; the locked body is byte-identical. Also rebaselined the benchmark's `lock_contention` scenario (see below). |
+| `17cd32cc0f` | `NetHandler.cc`: `startCop()` applies the global default inactivity timeout eagerly; the lazy `-1` fixup and its pre-check clause are deleted from the cop. Benchmark fixture switched to call the real `startCop()`. |
+
+Supporting commits with no effect on measurements: `9345864863` (doc),
+`1e4be9b765` / `f9d8672efb` (this log).
 
 Expected: `get_mutex/run` falls well below N in scenarios where few connections
 are due (`idle`, `keepalive`, `churn`); `get_thread/run` still equals N, because
@@ -451,18 +580,26 @@ is roughly flat rather than a significant regression.
 
 ---
 
-# Checkpoint 2 — after the timer wheel switchover
+# Entry 4 — Checkpoint 2, after the timer wheel switchover
 
 _Not yet run._
 
 Expected: `get_thread/run` collapses toward zero; large-N wall time drops
 sharply and the super-linear knee at N=100000 flattens.
 
+Before measuring, re-measure entry 3 (`17cd32cc0f`) in the same session — see
+"How to add an entry" at the top. Also re-check `mass_expiry`, which entry 3
+left roughly flat; the wheel changes which connections are examined at all.
+
+**Changes since entry 3:** _(list the commits and what each did)_
+
 | | |
 | --- | --- |
 | commit | |
+| compared against | |
 | build type | |
 | date | |
+| sizes | _(confirm `sizeof(PaddedMock)` is still 1584)_ |
 
 ```
 (paste benchmark output here)
@@ -472,18 +609,22 @@ Notes:
 
 ---
 
-# Checkpoint 3 — after the dead sweep machinery is removed
+# Entry 5 — Checkpoint 3, after the dead sweep machinery is removed
 
 _Not yet run._
 
-Expected: counters unchanged from checkpoint 2; this is a cleanup, so any
+Expected: counters unchanged from entry 4; this is a cleanup, so any
 movement in the counters means the removal was not inert.
 
+**Changes since entry 4:** _(list the commits and what each did)_
+
 | | |
 | --- | --- |
 | commit | |
+| compared against | |
 | build type | |
 | date | |
+| sizes | _(confirm `sizeof(PaddedMock)` is still 1584)_ |
 
 ```
 (paste benchmark output here)
@@ -493,15 +634,21 @@ Notes:
 
 ---
 
-# Checkpoint 4 — final pre-PR run
+# Entry 6 — Checkpoint 4, final pre-PR run
 
 _Not yet run._
+
+From a clean build. These are the numbers that go in the PR description.
+
+**Changes since entry 5:** _(list the commits and what each did)_
 
 | | |
 | --- | --- |
 | commit | |
+| compared against | |
 | build type | |
 | date | |
+| sizes | _(confirm `sizeof(PaddedMock)` is still 1584)_ |
 
 ```
 (paste benchmark output here)

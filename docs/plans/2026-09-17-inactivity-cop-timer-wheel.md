@@ -416,7 +416,17 @@ git commit -m "Record InactivityCop baseline measurements"
 
 ### When to re-run
 
-Re-run `./build-bench/src/iocore/net/test_net "[inactivity_cop]"` and append a row at each of these points, always in the same build directory and build type:
+Results live in [`inactivity-cop-benchmark-results.md`](inactivity-cop-benchmark-results.md),
+which is a **running log**: one entry per measured point, each recording the
+commit, the code change since the previous entry, and the numbers. Read its
+"Rules that make entries comparable" and "How to add an entry" sections before
+measuring — in particular, **re-measure the previous entry's commit
+back-to-back in the same session** rather than comparing against a number
+already written in the file. Between-session variance on the same commit has
+been observed at 26%, larger than the within-session noise floor.
+
+Add an entry at each of these points, always in the same build directory and
+build type:
 
 - **after Task 3** (end of Phase 1) — expect `get_mutex/run` to fall sharply in `idle` (the lock is no longer taken for connections with nothing to do) while `get_thread/run` stays at N, since the refill walk is untouched
 - **after Task 10** (the switchover) — expect `get_thread/run` to collapse, since the `open_list` refill walk is gone
