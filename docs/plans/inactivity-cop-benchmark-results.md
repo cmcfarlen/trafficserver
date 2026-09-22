@@ -654,8 +654,11 @@ lock_contention     100000     0.3989     0.1649     0.5870         3.99        
 ```
 
 `idle` at N=100000: **15.88 ms (entry 2, pre-Phase-1) → 9.07 ms (entry 3) →
-0.0001 ms**. Three consecutive runs pass all assertions, including an exact
-equality that `mass_expiry` fires exactly N callbacks summed across samples.
+0.0001 ms**. Three consecutive runs pass all assertions, including two exact
+equalities on `mass_expiry`: the first sample fires exactly
+`min(N, TIMEOUT_BUDGET)` callbacks, and the sum across samples is exactly N.
+Those hold reliably because a fired callback is never rescheduled, so they are
+immune to how many ticks a given `expire()` call happens to drain.
 
 `lock_contention` asserts only a lower bound (`total failures >= held count`).
 An exact bound was attempted and is **not achievable** with this harness: it
