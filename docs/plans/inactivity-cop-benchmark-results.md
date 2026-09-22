@@ -21,7 +21,7 @@ noisy and only comparable within a measurement session (see the rules below).
 | 2 | Pre-Phase-1 (re-measured) | `759cbac375` | 15.88 ms | N | N | Same code as #1, re-measured on the current base. **This is the true reference for #3.** |
 | 3 | Checkpoint 1 — Phase 1 | `17cd32cc0f` | **9.07 ms** | **0** | N | Deadline pre-check before the lock; global default timeout applied at `startCop`. |
 | 4 | Checkpoint 2 — timer wheel | `b6b604b8ec` | 0.0001 ms* | 0 | **0** | Wheel replaces the `open_list` refill walk. *See entry 4's measurement caveat: a benchmark call is no longer a tick. |
-| 5 | Checkpoint 3 — sweep removed | _pending_ | | | | `cop_list` and the TS-4612 epoll hook deleted. |
+| 5 | Checkpoint 3 — sweep removed | `7b2e247d32` | 0.0001 ms* | 0 | 0 | `cop_list`, `cop_link` and the TS-4612 epoll hook deleted. Counters unchanged — the cleanup is inert, which is the result. |
 | 6 | Checkpoint 4 — pre-PR | _pending_ | | | | Final run from a clean build. |
 
 ## Rules that make entries comparable
@@ -729,26 +729,65 @@ like a wheel with subtly wrong semantics.**
 
 # Entry 5 — Checkpoint 3, after the dead sweep machinery is removed
 
-_Not yet run._
+Expected: counters unchanged from entry 4; this is a cleanup, so any movement in
+the counters means the removal was not inert.
 
-Expected: counters unchanged from entry 4; this is a cleanup, so any
-movement in the counters means the removal was not inert.
+**Outcome: counters identical to entry 4. The cleanup is inert, which is the
+result being asserted here.**
 
-**Changes since entry 4:** _(list the commits and what each did)_
+**Changes since entry 4:** one commit, `7b2e247d32`:
+
+- Deleted `NetHandler::cop_list` and `NetEvent`'s `cop_link`.
+- Deleted the TS-4612 hook in `ReadWriteEventIO::process_event`, which removed a
+  triggered `NetEvent` from `cop_list` so the sweep would skip it. It existed
+  only to shrink the sweep, so it is pointless now — and removing it takes a
+  branch and a store off the per-epoll-event path.
+- Updated the `startCop`/`stopCop` doc comments, which still described the sweep.
 
 | | |
 | --- | --- |
-| commit | |
-| compared against | |
-| build type | |
-| date | |
-| sizes | _(confirm `sizeof(PaddedMock)` is still 1584)_ |
+| commit | `7b2e247d32` |
+| build type | RelWithDebInfo (`-O3 -g -DNDEBUG`), build-bench |
+| host | pebs.local (M4 Max), Apple clang 21.0.0 |
+| date | 2026-09-22 |
+| sizes | `sizeof(PaddedMock)` = 1584 (unchanged). Live `sizeof(UnixNetVConnection)` = **1584**, down from 1600 — `cop_link` was two pointers. The drift NOTE no longer prints. |
 
-```
-(paste benchmark output here)
-```
+At N=100000, three runs: `idle` 0.0001 ms with all counters 0;
+`mass_expiry` and `lock_contention` 1.14-1.95 ms with `get_mutex/run` and
+`cb/run` at 1696 (the `TIMEOUT_BUDGET` cap). All 2015 assertions pass on each of
+three consecutive runs.
+
+## `open_list` was kept deliberately
+
+After entry 4 removed the refill walk, `open_list` has **no readers** — it is
+enqueue in `startCop`, remove in `stopCop`, and the `ink_assert(!open_list.in(ne))`
+double-registration guard. A tree-wide grep confirms nothing else touches it.
+
+It was kept anyway:
+
+- The assert is a real O(1) reader and a genuine guard.
+- It is the only enumeration of every `NetEvent` on a thread. **The wheel cannot
+  substitute** — elements are scattered across 4096 buckets, and a `NetEvent`
+  with no deadline is not scheduled in it at all (exactly the case that caused
+  the never-times-out bug entry 4 fixed).
+- Its cost was never the list; it was the *walk*. What remains is two pointers
+  per `NetEvent` and an O(1) enqueue/remove once per connection lifetime — not
+  per tick.
+
+A reviewer may reasonably challenge maintaining a near-write-only list. The
+rationale is recorded at the declaration in `include/iocore/net/NetHandler.h`.
+
+## Incidental confirmation of the frozen footprint
+
+`sizeof(UnixNetVConnection)` has now been 1560, then 1600, then 1584 across three
+checkpoints. Had `MOCK_FOOTPRINT_BYTES` tracked it, the mock stride and therefore
+the cache profile would have changed three times and no two entries would be
+comparable. Freezing it was the right call; keep it frozen.
 
 Notes:
+
+- The `AuTest` timeout suite has **still not been run** against any of this work.
+  It remains the real gate.
 
 ---
 
