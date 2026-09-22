@@ -20,7 +20,7 @@ noisy and only comparable within a measurement session (see the rules below).
 | 1 | Baseline (old base) | `e86884d264` | 13.80 ms | N | N | Unmodified cop. Reference only — measured on a base 63 upstream commits older than everything after it. |
 | 2 | Pre-Phase-1 (re-measured) | `759cbac375` | 15.88 ms | N | N | Same code as #1, re-measured on the current base. **This is the true reference for #3.** |
 | 3 | Checkpoint 1 — Phase 1 | `17cd32cc0f` | **9.07 ms** | **0** | N | Deadline pre-check before the lock; global default timeout applied at `startCop`. |
-| 4 | Checkpoint 2 — timer wheel | _pending_ | | | expect ≪ N | Wheel replaces the `open_list` refill walk. |
+| 4 | Checkpoint 2 — timer wheel | `b6b604b8ec` | 0.0001 ms* | 0 | **0** | Wheel replaces the `open_list` refill walk. *See entry 4's measurement caveat: a benchmark call is no longer a tick. |
 | 5 | Checkpoint 3 — sweep removed | _pending_ | | | | `cop_list` and the TS-4612 epoll hook deleted. |
 | 6 | Checkpoint 4 — pre-PR | _pending_ | | | | Final run from a clean build. |
 
@@ -582,30 +582,121 @@ is roughly flat rather than a significant regression.
 
 # Entry 4 — Checkpoint 2, after the timer wheel switchover
 
-_Not yet run._
-
 Expected: `get_thread/run` collapses toward zero; large-N wall time drops
 sharply and the super-linear knee at N=100000 flattens.
 
-Before measuring, re-measure entry 3 (`17cd32cc0f`) in the same session — see
-"How to add an entry" at the top. Also re-check `mass_expiry`, which entry 3
-left roughly flat; the wheel changes which connections are examined at all.
+**Outcome: `get_thread/run` went to exactly 0 and per-call cost collapsed. But
+read the measurement caveat below before quoting the wall-clock figures — the
+switchover changed what a benchmark "call" costs, so entry 3's numbers and these
+are not measuring the same thing.**
 
-**Changes since entry 3:** _(list the commits and what each did)_
+**Changes since entry 3:**
+
+| Commit | Change |
+| --- | --- |
+| `19c2247824` | `NetEvent` gains `TimerWheelHook` + `LINK(NetEvent, timer_link)`; `NetHandler` gains a `TimerWheel<NetEvent>`, `rearm_timer()`, `_earliest_deadline()`; every deadline write routed through `rearm_timer()` except `netActivity()` |
+| `3967b2fe55` | `startCop` schedules, `stopCop` cancels; closed NetEvents re-armed to the next tick; `clear()` asserts not-scheduled |
+| `b6b604b8ec` | **The switchover.** `check_inactivity()` drives `timer_wheel.expire()` via a `Fire` functor instead of draining `cop_list`. Default inactivity timeout now armed in `set_enabled`/`netActivity`/`cancel_inactivity_timeout` |
 
 | | |
 | --- | --- |
-| commit | |
-| compared against | |
-| build type | |
-| date | |
-| sizes | _(confirm `sizeof(PaddedMock)` is still 1584)_ |
+| commit | `b6b604b8ec` |
+| build type | RelWithDebInfo (`-O3 -g -DNDEBUG`), build-bench |
+| host | pebs.local (M4 Max), Apple clang 21.0.0 |
+| date | 2026-09-22 |
+| sizes | `sizeof(PaddedMock)` = 1584 (unchanged); live `sizeof(UnixNetVConnection)` = 1600, up from 1560 — the hook and link. Frozen footprint left alone, drift NOTE prints as designed |
+
+## Counter columns — the structural result
+
+| scenario | `get_thread/run` entry 3 | `get_thread/run` now |
+| --- | --- | --- |
+| every scenario, every N | N | **0** |
+
+`check_inactivity()` no longer walks `open_list` at all. This is the change the
+whole refactor exists for, and it is exact and variance-free. (`cop_list` and the
+walk code still exist in the tree; entry 5 deletes them.)
+
+## Measured
 
 ```
-(paste benchmark output here)
+scenario                 N    mean_ms     min_ms     max_ms      ns/conn  get_mutex/run get_thread/run     cb/run lockfail/run
+idle                  1000     0.0001     0.0000     0.0001         0.06              0              0          0            0
+idle                 10000     0.0001     0.0000     0.0001         0.01              0              0          0            0
+idle                100000     0.0001     0.0000     0.0002         0.00              0              0          0            0
+keepalive             1000     0.0001     0.0000     0.0001         0.05              0              0          0            0
+keepalive            10000     0.0001     0.0000     0.0003         0.01              0              0          0            0
+keepalive           100000     0.0004     0.0000     0.0019         0.00              0              0          0            0
+churn                 1000     0.0001     0.0000     0.0001         0.05              0              0          0            0
+churn                10000     0.0001     0.0000     0.0001         0.01              0              0          0            0
+churn               100000     0.0001     0.0000     0.0002         0.00              0              0          0            0
+mass_expiry           1000     0.0043     0.0000     0.1069         4.32              0              0          0            0
+mass_expiry          10000     0.0557     0.0000     0.6162         5.57              0              0          0            0
+mass_expiry         100000     0.4486     0.1798     0.7123         4.49           1696              0       1696            0
+lock_contention       1000     0.0044     0.0000     0.1077         4.36              0              0          0            0
+lock_contention      10000     0.0585     0.0000     0.6763         5.85              0              0          0            0
+lock_contention     100000     0.3989     0.1649     0.5870         3.99           1696              0       1696            0
 ```
 
-Notes:
+`idle` at N=100000: **15.88 ms (entry 2, pre-Phase-1) → 9.07 ms (entry 3) →
+0.0001 ms**. All 2015 benchmark assertions pass, including exact-equality checks
+that `mass_expiry` fires exactly N callbacks summed across samples and
+`lock_contention` records exactly the held-mutex count of failures.
+
+## Measurement caveat: a benchmark call is no longer a tick
+
+**Do not read "0.0001 ms" as "the wheel costs 0.0001 ms per second of
+operation."** The switchover changed what the harness measures.
+
+Under the old sweep, *every* `check_inactivity()` call did the full O(N) walk
+regardless of wall-clock, so 25 rapid-fire calls each cost the same as a real
+one-second tick. Under the wheel, a call only does work if it crosses a
+one-second tick boundary. The harness fires 25 calls in well under a second, so
+most of them advance no tick and correctly do nothing.
+
+So these figures understate the wheel's true per-tick cost. The honest readings:
+
+- `get_thread/run` = 0 is **exact and fully meaningful** — it is a structural
+  property, not a timing artifact. Quote this.
+- The wall-clock collapse is **directionally real but not a clean per-tick
+  number.** A production cop is invoked exactly once per second, so every real
+  call crosses a tick; the harness's do-nothing calls dilute the mean.
+- `churn` shows `cb/run = 0` for the same reason: its 1%-per-tick expiry needs a
+  tick to elapse, and the sampling loop is faster than that.
+
+To get a true per-tick comparison the harness would need to force a tick advance
+per call (e.g. an injectable clock). That is worth doing before quoting a
+speedup multiplier in the PR. Until then, lead with the counter columns.
+
+A second harness artifact worth knowing: every mock shares an identical deadline,
+so they all land in **one** bucket. Production deadlines are staggered by arrival
+time and spread across buckets naturally. That makes `mass_expiry` and
+`lock_contention` here a worst-case single-bucket drain — which is why they are
+budget-limited to `TIMEOUT_BUDGET` (4096) per call, visible as `cb/run = 1696`.
+
+## Fixture bug found and fixed while taking this measurement
+
+The fixture never called `nh.timer_wheel.init()` — production does it in
+`initialize_thread_for_net()`, but the benchmark builds its own `NetHandler`. So
+`_cursor` sat at 0 against a `now_tick` of ~1.8e9, and the first `expire()` hit
+the cursor-lag clamp and walked 4096 ticks in a single call. That produced a
+cascade of confusing artifacts (mass expiry spilling unpredictably, lock failures
+exceeding the held count) which were initially worked around by loosening
+assertions. With `init()` added, the exact assertions hold and the relaxations
+were reverted. Worth remembering: **a wheel whose cursor is not initialized looks
+like a wheel with subtly wrong semantics.**
+
+## Notes
+
+- The switchover fixed a latent gap not in the original plan: the *only* code
+  that applied `default_inactivity_timeout_in` was the cop's lazy sweep block,
+  gated on `read.enabled || write.enabled`. Under the wheel a connection with no
+  explicit timeout has no deadline, so it is never scheduled, so the cop never
+  visits it, so the default never applies — **it would never time out.** Arming
+  moved to `set_enabled`, `netActivity` (as an extension, so the hot path still
+  does no wheel work), and `cancel_inactivity_timeout`.
+- The `AuTest` timeout suite has **still not been run** against any of this, and
+  it is the real gate — especially `default_inactivity_timeout.test.py`, which
+  covers exactly the gap above.
 
 ---
 
