@@ -616,6 +616,22 @@ are not measuring the same thing.**
 whole refactor exists for, and it is exact and variance-free. (`cop_list` and the
 walk code still exist in the tree; entry 5 deletes them.)
 
+> **`get_thread/run` has changed meaning at this entry — do not keep reading it as
+> "refill-walk touches."** The walk it used to count is gone. The counter is
+> instrumented on `MockNetEvent::get_thread()`, and the remaining caller is the
+> `ink_assert(ne->get_thread() == this_ethread())` inside
+> `NetHandler::rearm_timer()`. So it now counts **re-arms**, not sweep touches.
+>
+> It reads 0 in the three runs recorded below because their locks all succeeded.
+> A run where the `lock_contention` mutexes actually caused failures showed
+> `get_thread/run = 1696` — matching its `lockfail/run` exactly, because the
+> lock-failure path re-arms each element it could not lock. Both readings are
+> correct; they measure different things than the column did before.
+>
+> Practical consequence for entries 5 and 6: a **rise** in `get_thread/run` is no
+> longer evidence the sweep came back. Verify that claim by reading the code or
+> by grepping for the walk, not from this counter.
+
 ## Measured
 
 ```
@@ -638,9 +654,17 @@ lock_contention     100000     0.3989     0.1649     0.5870         3.99        
 ```
 
 `idle` at N=100000: **15.88 ms (entry 2, pre-Phase-1) → 9.07 ms (entry 3) →
-0.0001 ms**. All 2015 benchmark assertions pass, including exact-equality checks
-that `mass_expiry` fires exactly N callbacks summed across samples and
-`lock_contention` records exactly the held-mutex count of failures.
+0.0001 ms**. Three consecutive runs pass all assertions, including an exact
+equality that `mass_expiry` fires exactly N callbacks summed across samples.
+
+`lock_contention` asserts only a lower bound (`total failures >= held count`).
+An exact bound was attempted and is **not achievable** with this harness: it
+advances through real time via sleeps, so whether any single call crosses a tick
+boundary — and how many ticks it catches up on if it does — depends on OS
+scheduling. A held mock was observed failing zero times in one call and twice in
+another, and a first-sample exact check failed outright with `0 >= 1000`. Pinning
+it down would need an injectable clock. The lower bound still catches the bug
+that matters: a held element being lost from the wheel entirely.
 
 ## Measurement caveat: a benchmark call is no longer a tick
 
