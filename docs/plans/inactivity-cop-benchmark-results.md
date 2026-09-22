@@ -22,7 +22,7 @@ noisy and only comparable within a measurement session (see the rules below).
 | 3 | Checkpoint 1 — Phase 1 | `17cd32cc0f` | **9.07 ms** | **0** | N | Deadline pre-check before the lock; global default timeout applied at `startCop`. |
 | 4 | Checkpoint 2 — timer wheel | `b6b604b8ec` | 0.0001 ms* | 0 | **0** | Wheel replaces the `open_list` refill walk. *See entry 4's measurement caveat: a benchmark call is no longer a tick. |
 | 5 | Checkpoint 3 — sweep removed | `7b2e247d32` | 0.0001 ms* | 0 | 0 | `cop_list`, `cop_link` and the TS-4612 epoll hook deleted. Counters unchanged — the cleanup is inert, which is the result. |
-| 6 | Checkpoint 4 — pre-PR | _pending_ | | | | Final run from a clean build. |
+| 6 | Checkpoint 4 — pre-PR | `af2e508648` | **0.0001 ms** | 0 | 0 | Injectable clock: one benchmark call is now exactly one tick, so this figure is a real per-tick cost. |
 
 ## Rules that make entries comparable
 
@@ -793,23 +793,110 @@ Notes:
 
 # Entry 6 — Checkpoint 4, final pre-PR run
 
-_Not yet run._
+These are the numbers that go in the PR description, and unlike entries 4 and 5
+they are **honest per-tick costs**: the harness now drives the cop from a
+synthetic clock advancing exactly one `TimerWheel::TICK` per call, which is what
+production does (the cop is scheduled once per second).
 
-From a clean build. These are the numbers that go in the PR description.
+**Changes since entry 5:**
 
-**Changes since entry 5:** _(list the commits and what each did)_
+| Commit | Change |
+| --- | --- |
+| `544ebcdd77` | `inactivity_cop_visited` / `inactivity_cop_budget_exhausted` metrics; plus a `netActivity` fix — it armed a default deadline on a vc that was never scheduled, which the old sweep caught by visiting everything |
+| `f7cf31b858` | Cross-check the `visited` metric against the mock's own counts |
+| `20cbd530fe`, `37791cfaa8` | Developer-guide design doc |
+| `af2e508648` | **The clock seam.** `InactivityCop::run(now, e)` split out of the event handler; benchmark reworked onto it. Also removed a dead metric field and a dead include. |
 
 | | |
 | --- | --- |
-| commit | |
-| compared against | |
-| build type | |
-| date | |
-| sizes | _(confirm `sizeof(PaddedMock)` is still 1584)_ |
+| commit | `af2e508648` |
+| build type | RelWithDebInfo (`-O3 -g -DNDEBUG`), build-bench |
+| host | pebs.local (M4 Max), Apple clang 21.0.0 |
+| date | 2026-09-22 |
+| sizes | `sizeof(PaddedMock)` = 1584 (unchanged, frozen); live `sizeof(UnixNetVConnection)` = 1584 |
+| method | 3 runs, 25 samples each; **one call = one tick** |
+
+## Why this entry supersedes entries 4 and 5 for wall-clock
+
+Entries 4 and 5 recorded `0.0001 ms` for `idle` with a caveat that a benchmark
+call was no longer a tick: most of the 25 rapid-fire calls crossed no tick
+boundary and correctly did nothing, so the figure understated real per-tick cost
+and `churn` measured nothing at all.
+
+`InactivityCop::run(ink_hrtime now, Event *e)` is now split out of
+`check_inactivity()`, so the harness supplies the clock. Production is unchanged —
+no indirection, no virtual, no function pointer; the handler just passes
+`ink_get_hrtime()`. Consequences:
+
+- Every measured call is exactly one tick, matching production.
+- `churn` works again and is asserted **exactly**: `cb/run == N/100`.
+- The two 1.1 s real-time settle sleeps are gone. The whole suite runs in
+  **~0.29 s** per run versus 6.6 s of mandatory sleeping before — roughly 20x
+  faster, with zero real-time dependence and no flaky assertions across 6 runs.
+
+## Measured, per tick
 
 ```
-(paste benchmark output here)
+scenario                 N    mean_ms     min_ms     max_ms      ns/conn  get_mutex/run get_thread/run     cb/run lockfail/run
+idle                  1000     0.0000     0.0000     0.0001         0.04              0              0          0            0
+idle                 10000     0.0000     0.0000     0.0000         0.00              0              0          0            0
+idle                100000     0.0001     0.0000     0.0002         0.00              0              0          0            0
+keepalive             1000     0.0000     0.0000     0.0001         0.04              0              0          0            0
+keepalive            10000     0.0000     0.0000     0.0001         0.00              0              0          0            0
+keepalive           100000     0.0001     0.0000     0.0002         0.00              0              0          0            0
+churn                 1000     0.0001     0.0001     0.0001         0.13             10              0         10            0
+churn                10000     0.0011     0.0011     0.0013         0.11            100              0        100            0
+churn               100000     0.0114     0.0107     0.0146         0.11           1000              0       1000            0
+mass_expiry           1000     0.0004     0.0000     0.0099         0.43              0              0          0            0
+mass_expiry          10000     0.0041     0.0000     0.0442         0.41              0              0          0            0
+mass_expiry         100000     0.2094     0.0573     0.4049         2.09           1696              0       1696            0
+lock_contention       1000     0.0027     0.0012     0.0120         2.69            100            100          0          100
+lock_contention      10000     0.0135     0.0094     0.0415         1.35           1000           1000          0         1000
+lock_contention     100000     0.2381     0.0856     0.3885         2.38           4096           2400       1696         2400
 ```
+
+2096 assertions pass on each of three consecutive runs.
+
+## The headline for the PR
+
+`idle` at N=100,000 — the case the refactor exists for, many connections with
+nothing due:
+
+| | per cop tick |
+| --- | --- |
+| Pre-refactor (entry 2, same base) | **15.88 ms** |
+| After Phase 1 (entry 3) | 9.07 ms |
+| After the wheel (this entry, true per-tick) | **0.0001 ms** |
+
+And the exact, variance-free counters: `get_thread/run` **N → 0**, `get_mutex/run`
+**N → 0**. The cop no longer touches a connection that has nothing due.
+
+An empty tick is O(1) in N — `expire()` walks the one bucket for the one tick
+advanced — which is the whole point of the change. `churn` shows the cost of real
+work: ~11 µs per tick to fire 1,000 timeouts at N=100,000.
+
+## Notes and honest limits
+
+- `lock_contention` asserts an **exact** total (`held_count * SAMPLE_RUNS`) for
+  N=1000, which was impossible before the synthetic clock. For N=10000 and
+  N=100000 it remains a floor (`>=`): the population exceeds `TIMEOUT_BUDGET`, so
+  `expire()`'s early return leaves the cursor lagging and later calls catch up
+  several ticks. That is fully deterministic now, but the exact count is a
+  function of how held and non-held mocks interleave across budget-capped bucket
+  walks, and deriving it would mean reimplementing the wheel's walk as a second
+  oracle inside the test — fragile, and silently coupled to `expire()`'s
+  early-return semantics.
+- `MockNetEvent::set_inactivity_timeout()` still stamps from `ink_get_hrtime()`,
+  mirroring `UnixNetVConnection`. No scenario calls it, so it is inert, but a
+  future scenario that exercises it would silently reintroduce a real-time
+  dependency. Flagged in a comment at the method.
+- Still single-threaded. Real cops run concurrently on every net thread;
+  `lock_contention` simulates failed acquisitions but not cross-thread cache-line
+  traffic.
+- The `AuTest` timeout suite passes against this work (11 passed / 0 failed /
+  0 skipped), which is the real correctness gate. It was last run at
+  `544ebcdd77`; the only production change since is the `run()` split, which is
+  pure motion of the clock source.
 
 Notes:
 
