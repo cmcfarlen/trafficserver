@@ -675,7 +675,7 @@ struct SearchRemapRequest : shared::rpc::ClientRequest {
   using super = shared::rpc::ClientRequest;
 
   struct Params {
-    std::vector<std::string> names;
+    std::string authority;
   };
   SearchRemapRequest(const Params &p);
 
@@ -687,10 +687,10 @@ struct SearchRemapRequest : shared::rpc::ClientRequest {
 };
 template <> struct YAML::convert<SearchRemapRequest::Params> {
   static Node
-  encode(SearchRemapRequest::Params const &)
+  encode(SearchRemapRequest::Params const &p)
   {
     Node node;
-    node["authority"] = "foobar";
+    node["authority"] = p.authority;
     return node;
   }
 };
@@ -717,7 +717,9 @@ RemapCommand::RemapCommand(ts::Arguments *args) : CtrlCommand(args)
 void
 RemapCommand::remap_get()
 {
-  SearchRemapRequest request{{}};
+  auto args = get_parsed_arguments();
+
+  SearchRemapRequest request{{.authority = args->get("authority").value()}};
   auto               response = invoke_rpc(request);
   _printer->write_output(response);
 }

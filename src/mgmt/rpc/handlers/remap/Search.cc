@@ -22,6 +22,7 @@
 #include "shared/rpc/yaml_codecs.h"
 #include "swoc/Errata.h"
 #include "tsutil/DbgCtl.h"
+#include "tsutil/Regex.h"
 #include "yaml-cpp/node/node.h"
 
 #include "proxy/http/remap/UrlRewrite.h"
@@ -43,30 +44,35 @@ remap_search(std::string_view const & /* id ATS_UNUSED */, YAML::Node const &par
 {
   swoc::Rv<YAML::Node> resp{};
   const auto           p = params.as<SearchParams>();
+  Regex                auth_re{};
 
-  auto render_mappings = [&p](const UrlRewrite::MappingsStore &store) -> YAML::Node {
+  auth_re.compile(p.authority);
+
+  auto render_mappings = [&auth_re](YAML::Node &&dest, const UrlRewrite::MappingsStore &store) {
     YAML::Node s{};
     YAML::Node keys{};
     if (!store.empty()) {
       for (auto [k, tbl] : *store.hash_lookup) {
-        if (k.find(p.authority) != std::string::npos) {
+        if (auth_re.exec(k)) {
           keys.push_back(k);
         }
       }
-      s["keys"] = keys;
+      if (keys.IsSequence()) {
+        s["keys"] = keys;
+        dest      = s;
+      }
     }
-    return s;
   };
 
   Dbg(dbg_ctl_rpc_remap, "Remap search: %s", p.authority.c_str());
 
   UrlRewrite *maps = rewrite_table->acquire();
 
-  resp.result()["forward"]                         = render_mappings(maps->forward_mappings());
-  resp.result()["reverse"]                         = render_mappings(maps->reverse_mappings());
-  resp.result()["permanent_redirects"]             = render_mappings(maps->permanent_redirects());
-  resp.result()["temporary_redirects"]             = render_mappings(maps->temporary_redirects());
-  resp.result()["forward_mappings_with_recv_port"] = render_mappings(maps->forward_mappings_with_recv_port());
+  render_mappings(resp.result()["forward"], maps->forward_mappings());
+  render_mappings(resp.result()["reverse"], maps->reverse_mappings());
+  render_mappings(resp.result()["permanent_redirects"], maps->permanent_redirects());
+  render_mappings(resp.result()["temporary_redirects"], maps->temporary_redirects());
+  render_mappings(resp.result()["forward_mappings_with_recv_port"], maps->forward_mappings_with_recv_port());
 
   maps->release();
 

@@ -211,7 +211,8 @@ main([[maybe_unused]] int argc, const char **argv)
     .add_option("--params", "-p", "Parameters to be passed in the request, YAML or JSON format", "", MORE_THAN_ONE_ARG_N, "", "")
     .add_example_usage("traffic_ctl rpc invoke foo_bar -p \"numbers: [1, 2, 3]\"");
 
-  remap_command.add_command("search", "Search remap rules", "", MORE_THAN_ONE_ARG_N, [&]() { command->execute(); });
+  remap_command.add_command("search", "Search remap rules", "", 0, [&]() { command->execute(); })
+    .add_option("--authority", "-a", "Authority to search for", "", MORE_THAN_ZERO_ARG_N, "", "authority");
 
   try {
     // for now we only care about SIGINT(SIGQUIT, ... ?)
