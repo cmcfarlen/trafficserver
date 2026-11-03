@@ -115,10 +115,12 @@ public:
   bool              ip_allow_check_enabled_p = false;
   acl_filter_rule  *filter                   = nullptr; // acl filtering (linked list of rules)
   LINK(url_mapping, link);                              // For use with the main Queue linked list holding all the mapping
-  NextHopSelectionStrategy      *strategy = nullptr;
-  std::string                    remapKey;
-  std::atomic<uint64_t>          _hitCount       = 0; // counter can overflow
-  std::atomic<CacheHostRecord *> volume_host_rec = nullptr;
+  NextHopSelectionStrategy *strategy = nullptr;
+  std::string               remapKey;
+  // Every request through this rule increments the count from its own thread, so it gets a cache
+  // line to itself: the members around it are read per request and would miss on each increment.
+  alignas(64) std::atomic<uint64_t> _hitCount                = 0; // counter can overflow
+  alignas(64) std::atomic<CacheHostRecord *> volume_host_rec = nullptr;
 
   CacheHostRecord *
   getVolumeHostRec() const
