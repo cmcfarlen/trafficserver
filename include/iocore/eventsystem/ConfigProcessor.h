@@ -33,7 +33,17 @@ class ProxyMutex;
 
 #define MAX_CONFIGS 100
 
-using ConfigInfo = RefCountObjInHeap;
+/** Base for configurations published through ConfigProcessor.
+
+    Transactions acquire and release configurations, writing the refcount from every thread. The
+    derived class's members start on the next cache line, so threads reading configuration values
+    do not miss on those writes.
+ */
+class ConfigInfo : public RefCountObjInHeap
+{
+protected:
+  alignas(64) unsigned char _refcount_line_end = 0;
+};
 
 class ConfigProcessor
 {

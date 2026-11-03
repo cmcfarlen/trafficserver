@@ -32,6 +32,10 @@
 
 ConfigProcessor configProcessor;
 
+// Derived members land at offset 64 or later only while ConfigInfo keeps this layout.
+static_assert(alignof(ConfigInfo) == 64);
+static_assert(sizeof(RefCountObjInHeap) <= 64);
+
 namespace
 {
 
