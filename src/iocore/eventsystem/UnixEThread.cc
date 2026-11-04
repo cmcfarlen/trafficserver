@@ -58,8 +58,9 @@ char const *const EThread::Metrics::Slice::STAT_NAME[] = {
 
 int              thread_max_heartbeat_mseconds       = THREAD_MAX_HEARTBEAT_MSECONDS;
 int              thread_deferred_counter_interval_ms = 0;
-int              loop_time_update_probability        = 10;
-const ink_hrtime DELAY_FOR_RETRY                     = HRTIME_MSECONDS(10);
+EThreadLoopHooks ethread_loop_hooks;
+int              loop_time_update_probability = 10;
+const ink_hrtime DELAY_FOR_RETRY              = HRTIME_MSECONDS(10);
 
 // To define a class inherits from Thread:
 //   1) Define an independent thread_local static member
@@ -255,6 +256,9 @@ EThread::execute_regular()
   if (counter_flush_interval > 0) {
     ts::Metrics::enable_thread_counter_deferral();
   }
+  if (ethread_loop_hooks.start != nullptr) {
+    ethread_loop_hooks.start();
+  }
 
   // give priority to immediate events
   while (!TSSystemState::is_event_system_shut_down()) {
@@ -270,7 +274,10 @@ EThread::execute_regular()
     ++(current_slice->_count); // loop started, bump count.
 
     EventStatistics statistics = fire_ready_events(loop_start_time);
-    ink_hrtime      sleep_time = get_sleep_time(statistics.event_time, current_slice);
+    if (ethread_loop_hooks.between_events != nullptr) {
+      ethread_loop_hooks.between_events();
+    }
+    ink_hrtime sleep_time = get_sleep_time(statistics.event_time, current_slice);
 
     // Flush before a sleep that would outlast the interval too, so an idle thread's counters are current.
     if (counter_flush_interval > 0 &&
@@ -309,6 +316,9 @@ EThread::execute_regular()
   }
 
   ts::Metrics::disable_thread_counter_deferral();
+  if (ethread_loop_hooks.stop != nullptr) {
+    ethread_loop_hooks.stop();
+  }
 }
 
 EThread::EventStatistics

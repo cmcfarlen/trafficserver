@@ -745,3 +745,13 @@ EThread::free_event(Event *e)
 extern int thread_max_heartbeat_mseconds;
 /// How often a regular EThread applies its deferred counter increments; zero increments directly.
 extern int thread_deferred_counter_interval_ms;
+
+/// Per-thread work for components that regular EThreads should not link against directly. Each
+/// thread calls @a start when its loop begins, @a between_events after each round of events, while no
+/// event handler is running, and @a stop when its loop ends. Set before the event threads start.
+struct EThreadLoopHooks {
+  void (*start)()          = nullptr;
+  void (*between_events)() = nullptr;
+  void (*stop)()           = nullptr;
+};
+extern EThreadLoopHooks ethread_loop_hooks;
