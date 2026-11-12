@@ -169,7 +169,10 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
     // Restore the client IP debugging flags
     set_cont_flags(e->continuation->control_flags);
 
-    e->continuation->handleEvent(calling_code, e);
+    {
+      LOCK_LEDGER_CONTEXT(e->continuation);
+      e->continuation->handleEvent(calling_code, e);
+    }
     if (loop_time_update_probability == 100) {
       event_time = ink_get_hrtime();
     } else if (loop_time_update_probability > 0) {

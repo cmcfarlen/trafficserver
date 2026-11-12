@@ -121,6 +121,7 @@ StripeSM::StripeSM(CacheDisk *disk, off_t blocks, off_t dir_skip, int avg_obj_si
     _preserved_dirs{len}
 {
   open_dir.mutex = this->mutex;
+  LOCK_LEDGER_NAME(this->mutex.get(), "stripe");
   SET_HANDLER(&StripeSM::aggWrite);
 }
 

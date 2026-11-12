@@ -386,6 +386,7 @@ NetHandler::process_ready_list()
 #if defined(USE_EDGE_TRIGGER)
   // NetEvent *
   while ((ne = read_ready_list.dequeue())) {
+    LOCK_LEDGER_CONTEXT(ne);
     // Initialize the thread-local continuation flags
     set_cont_flags(ne->get_control_flags());
     if (ne->closed) {
@@ -397,6 +398,7 @@ NetHandler::process_ready_list()
     }
   }
   while ((ne = write_ready_list.dequeue())) {
+    LOCK_LEDGER_CONTEXT(ne);
     set_cont_flags(ne->get_control_flags());
     if (ne->closed) {
       free_netevent(ne);

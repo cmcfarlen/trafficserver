@@ -122,6 +122,7 @@ option(EXTERNAL_LIBSWOC "Use external libswoc (default OFF)")
 option(EXTERNAL_HWY "Use external highway (default OFF)")
 option(LINK_PLUGINS "Link core libraries to plugins (default OFF)")
 option(ENABLE_PROBES "Enable ATS SystemTap probes (default OFF)")
+option(ENABLE_LOCK_LEDGER "Record ProxyMutex contention to per-thread files (default OFF)")
 option(ENABLE_VERIFY_PLUGINS "Enable plugin verification tests (default ON)" ON)
 option(ENABLE_THREAD_SAFETY_ANALYSIS "Enable Clang -Wthread-safety analysis (Clang only, default ON)" ON)
 option(THREAD_SAFETY_ANALYSIS_AS_ERROR "Treat thread-safety findings as errors; for CI gating (default OFF)")
@@ -432,6 +433,10 @@ endif()
 
 if(ENABLE_PROBES)
   add_compile_options("-DENABLE_SYSTEMTAP_PROBES")
+endif()
+
+if(ENABLE_LOCK_LEDGER)
+  add_compile_definitions(ENABLE_LOCK_LEDGER)
 endif()
 
 set(TS_USE_MALLOC_ALLOCATOR ${ENABLE_MALLOC_ALLOCATOR})

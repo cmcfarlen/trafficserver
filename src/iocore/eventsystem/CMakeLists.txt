@@ -21,6 +21,7 @@ add_library(
     EventSystem.cc
     IOBuffer.cc
     Lock.cc
+    LockLedger.cc
     MIOBufferWriter.cc
     PQ-List.cc
     Processor.cc
