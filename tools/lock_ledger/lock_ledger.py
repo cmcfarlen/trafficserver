@@ -22,19 +22,24 @@ Usage:
     lock_ledger.py summary [--dir /tmp] [--pid N] [--name stripe] [--top 15]
     lock_ledger.py timeline --mutex 0x... [--start-ms A] [--end-ms B]
     lock_ledger.py csv > entries.csv
+
+Entries are streamed, so a run of hundreds of millions of entries fits in memory; percentiles come
+from log-scale histograms and are accurate to about 10%.
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import math
 import os
 import re
 import struct
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 FILE_MAGIC = b"LKL2"
 CHUNK_MAGIC = b"CHNK"
@@ -50,8 +55,7 @@ OP_NAMES = {OP_MISS: "MISS", OP_WAIT: "WAIT", OP_RELEASE: "RELEASE"}
 FILE_RE = re.compile(r"lockledger\.(\d+)\.(\d+)\.bin$")
 
 
-@dataclass(slots=True)
-class Entry:
+class Entry(NamedTuple):
     timestamp: int
     mutex: int
     context: int
@@ -63,13 +67,18 @@ class Entry:
     thread: int
 
 
-@dataclass
 class Ledger:
-    sites: dict[int, tuple[str, str, int]] = field(default_factory=dict)
-    mutex_names: dict[int, str] = field(default_factory=dict)
-    threads: dict[int, str] = field(default_factory=dict)
-    entries: list[Entry] = field(default_factory=list)
-    dropped_chunks: int = 0
+    """Definitions from every file of one process; entries are read on demand with entries()."""
+
+    def __init__(self, files: list[Path]) -> None:
+        self.files = files
+        self.sites: dict[int, tuple[str, str, int]] = {}
+        self.mutex_names: dict[int, str] = {}
+        self.threads: dict[int, str] = {}
+        self.dropped_chunks = 0
+        for path in files:
+            for _ in self._chunks(path, defs_only=True):
+                pass
 
     def site(self, site_id: int) -> str:
         if site_id == 0:
@@ -86,63 +95,70 @@ class Ledger:
         name = self.mutex_names.get(addr)
         return f"{name}@{addr:#x}" if name else f"{addr:#x}"
 
+    def entries(self, name: str | None = None) -> Iterator[Entry]:
+        """Entries file by file, each file in time order (not globally sorted)."""
+        for path in self.files:
+            for tid, data in self._chunks(path, defs_only=False):
+                for fields in ENTRY.iter_unpack(data):
+                    if name is None or self.mutex_names.get(fields[1]) == name:
+                        yield Entry(*fields, tid)
 
-def read_str(buf: bytes, off: int) -> tuple[str, int]:
+    def _chunks(self, path: Path, defs_only: bool) -> Iterator[tuple[int, memoryview]]:
+        data = memoryview(path.read_bytes())
+        if bytes(data[:4]) != FILE_MAGIC:
+            raise ValueError(f"{path}: not a lock ledger file")
+        version, _pid, tid = struct.unpack_from("<III", data, 4)
+        if version != FILE_VERSION:
+            raise ValueError(f"{path}: unsupported version {version}")
+        name, off = read_str(data, 16)
+        self.threads[tid] = name or f"thread {tid}"
+        while off + 16 <= len(data):
+            if bytes(data[off : off + 4]) != CHUNK_MAGIC:
+                raise ValueError(f"{path}: bad chunk magic at offset {off}")
+            defs_len, count, dropped = struct.unpack_from("<III", data, off + 4)
+            off += 16
+            end = off + defs_len + count * ENTRY.size
+            if end > len(data):
+                print(f"warning: {path}: truncated chunk at offset {off - 16}, ignoring the rest", file=sys.stderr)
+                break
+            if defs_only:
+                self._parse_defs(data[off : off + defs_len])
+                self.dropped_chunks = max(self.dropped_chunks, dropped)
+            else:
+                yield tid, data[off + defs_len : end]
+            off = end
+
+    def _parse_defs(self, defs: memoryview) -> None:
+        off = 0
+        while off < len(defs):
+            tag = bytes(defs[off : off + 1])
+            off += 1
+            if tag == b"S":
+                site_id, line = struct.unpack_from("<II", defs, off)
+                off += 8
+                file, off = read_str(defs, off)
+                func, off = read_str(defs, off)
+                self.sites[site_id] = (file, func, line)
+            elif tag == b"M":
+                (addr,) = struct.unpack_from("<Q", defs, off)
+                off += 8
+                name, off = read_str(defs, off)
+                self.mutex_names[addr] = name
+            else:
+                raise ValueError(f"unknown definition tag {tag!r} at offset {off - 1}")
+
+
+def read_str(buf: memoryview, off: int) -> tuple[str, int]:
     (n,) = struct.unpack_from("<H", buf, off)
     off += 2
-    return buf[off : off + n].decode("utf-8", "replace"), off + n
-
-
-def parse_defs(ledger: Ledger, defs: bytes) -> None:
-    off = 0
-    while off < len(defs):
-        tag = defs[off : off + 1]
-        off += 1
-        if tag == b"S":
-            site_id, line = struct.unpack_from("<II", defs, off)
-            off += 8
-            file, off = read_str(defs, off)
-            func, off = read_str(defs, off)
-            ledger.sites[site_id] = (file, func, line)
-        elif tag == b"M":
-            (addr,) = struct.unpack_from("<Q", defs, off)
-            off += 8
-            name, off = read_str(defs, off)
-            ledger.mutex_names[addr] = name
-        else:
-            raise ValueError(f"unknown definition tag {tag!r} at offset {off - 1}")
-
-
-def parse_file(ledger: Ledger, path: Path) -> None:
-    data = path.read_bytes()
-    if data[:4] != FILE_MAGIC:
-        raise ValueError(f"{path}: not a lock ledger file (magic {data[:4]!r})")
-    version, _pid, tid = struct.unpack_from("<III", data, 4)
-    if version != FILE_VERSION:
-        raise ValueError(f"{path}: unsupported version {version}")
-    name, off = read_str(data, 16)
-    ledger.threads[tid] = name or f"thread {tid}"
-    while off + 16 <= len(data):
-        if data[off : off + 4] != CHUNK_MAGIC:
-            raise ValueError(f"{path}: bad chunk magic at offset {off}")
-        defs_len, count, dropped = struct.unpack_from("<III", data, off + 4)
-        off += 16
-        end = off + defs_len + count * ENTRY.size
-        if end > len(data):
-            print(f"warning: {path}: truncated chunk at offset {off - 16}, ignoring the rest", file=sys.stderr)
-            break
-        parse_defs(ledger, data[off : off + defs_len])
-        off += defs_len
-        for fields in ENTRY.iter_unpack(data[off : off + count * ENTRY.size]):
-            ledger.entries.append(Entry(*fields, thread=tid))
-        off += count * ENTRY.size
-        ledger.dropped_chunks = max(ledger.dropped_chunks, dropped)
+    return bytes(buf[off : off + n]).decode("utf-8", "replace"), off + n
 
 
 def load(directory: Path, pid: int | None) -> Ledger:
     files: dict[int, list[Path]] = defaultdict(list)
     for p in directory.iterdir():
-        if m := FILE_RE.search(p.name):
+        m = FILE_RE.search(p.name)
+        if m:
             files[int(m.group(1))].append(p)
     if not files:
         sys.exit(f"no lockledger.<pid>.<thread>.bin files in {directory}")
@@ -150,105 +166,120 @@ def load(directory: Path, pid: int | None) -> Ledger:
         pid = max(files, key=lambda k: max(f.stat().st_mtime for f in files[k]))
     elif pid not in files:
         sys.exit(f"no ledger files for pid {pid} in {directory} (have {sorted(files)})")
-    ledger = Ledger()
-    for p in sorted(files[pid]):
-        parse_file(ledger, p)
-    ledger.entries.sort(key=lambda e: e.timestamp)
-    print(f"pid {pid}: {len(files[pid])} thread files, {len(ledger.entries):,} entries", file=sys.stderr)
+    ledger = Ledger(sorted(files[pid]))
+    size = sum(f.stat().st_size for f in files[pid])
+    print(f"pid {pid}: {len(files[pid])} thread files, {size / 1e6:,.0f} MB", file=sys.stderr)
     if ledger.dropped_chunks:
         print(f"warning: the writer dropped {ledger.dropped_chunks} chunks; counts are lower bounds", file=sys.stderr)
     return ledger
 
 
-def pct(values: list[int], q: float) -> int:
-    if not values:
-        return 0
-    s = sorted(values)
-    return s[min(len(s) - 1, int(q * len(s)))]
+class Histogram:
+    """Durations in log-scale buckets (8 per doubling) for approximate percentiles over any count."""
+
+    PER_OCTAVE = 8
+
+    def __init__(self) -> None:
+        self.buckets: Counter[int] = Counter()
+        self.count = 0
+        self.total = 0
+        self.max = 0
+
+    def add(self, ns: int) -> None:
+        self.buckets[int(math.log2(ns) * self.PER_OCTAVE) if ns > 0 else -1] += 1
+        self.count += 1
+        self.total += ns
+        self.max = max(self.max, ns)
+
+    def pct(self, q: float) -> float:
+        target = q * self.count
+        seen = 0
+        for b in sorted(self.buckets):
+            seen += self.buckets[b]
+            if seen >= target:
+                return 0.0 if b < 0 else 2 ** ((b + 0.5) / self.PER_OCTAVE)
+        return float(self.max)
 
 
-def us(ns: int) -> str:
+def us(ns: float) -> str:
     return f"{ns / 1000:.1f}"
 
 
-def filtered(ledger: Ledger, name: str | None) -> list[Entry]:
-    if name is None:
-        return ledger.entries
-    return [e for e in ledger.entries if ledger.mutex_names.get(e.mutex) == name]
-
-
 def summary(ledger: Ledger, args: argparse.Namespace) -> None:
-    entries = filtered(ledger, args.name)
-    if not entries:
-        sys.exit("no entries match")
-    span_ns = entries[-1].timestamp - entries[0].timestamp
     top = args.top
-
-    releases = [e for e in entries if e.op == OP_RELEASE]
-    misses = [e for e in entries if e.op == OP_MISS]
-    waits = [e for e in entries if e.op == OP_WAIT]
-    print(f"span {span_ns / 1e9:.3f} s; {len(releases):,} holds, {len(misses):,} try-lock misses, {len(waits):,} blocking waits")
-    if releases:
-        print(f"miss rate: {len(misses) / (len(releases) + len(misses)):.2%} of try/lock attempts")
-
+    first = last = None
     per_mutex: dict[int, list[int]] = defaultdict(lambda: [0, 0, 0, 0])  # holds, hold_ns, misses, wait_ns
-    for e in entries:
+    holds: dict[int, Histogram] = defaultdict(Histogram)
+    miss_pairs: Counter[tuple[int, int]] = Counter()
+    miss_threads: Counter[tuple[int, int]] = Counter()
+    waits: dict[tuple[int, int], Histogram] = defaultdict(Histogram)
+    n_release = n_miss = n_wait = 0
+
+    for e in ledger.entries(args.name):
+        ts = e.timestamp
+        if first is None or ts < first:
+            first = ts
+        if last is None or ts > last:
+            last = ts
         row = per_mutex[e.mutex]
         if e.op == OP_RELEASE:
+            n_release += 1
             row[0] += 1
             row[1] += e.duration
+            holds[e.site].add(e.duration)
         elif e.op == OP_MISS:
+            n_miss += 1
             row[2] += 1
+            miss_pairs[(e.site, e.other_site)] += 1
+            miss_threads[(e.thread, e.other_thread)] += 1
         else:
+            n_wait += 1
             row[3] += e.duration
+            waits[(e.site, e.other_site)].add(e.duration)
+
+    if first is None:
+        sys.exit("no entries match")
+    span_ns = last - first
+    print(f"span {span_ns / 1e9:.3f} s; {n_release:,} holds, {n_miss:,} try-lock misses, {n_wait:,} blocking waits")
+    if n_release:
+        print(f"miss rate: {n_miss / (n_release + n_miss):.3%} of try/lock attempts")
+
     print(f"\n== Mutexes by misses (top {top}) ==")
-    print(f"{'mutex':<28} {'holds':>10} {'held %':>7} {'misses':>8} {'wait ms':>9}")
-    for addr, (holds, hold_ns, nmiss, wait_ns) in sorted(per_mutex.items(), key=lambda kv: (-kv[1][2], -kv[1][1]))[:top]:
+    print(f"{'mutex':<28} {'holds':>12} {'held %':>7} {'misses':>10} {'wait ms':>9}")
+    for addr, (nh, hold_ns, nm, wait_ns) in sorted(per_mutex.items(), key=lambda kv: (-kv[1][2], -kv[1][1]))[:top]:
         held = hold_ns / span_ns if span_ns else 0
-        print(f"{ledger.mutex(addr):<28} {holds:>10,} {held:>7.1%} {nmiss:>8,} {wait_ns / 1e6:>9.2f}")
+        print(f"{ledger.mutex(addr):<28} {nh:>12,} {held:>7.1%} {nm:>10,} {wait_ns / 1e6:>9.2f}")
 
-    holds_by_site: dict[int, list[int]] = defaultdict(list)
-    for e in releases:
-        holds_by_site[e.site].append(e.duration)
     print(f"\n== Hold time by acquiring site, µs (top {top} by total) ==")
-    print(f"{'count':>10} {'total ms':>9} {'p50':>8} {'p99':>8} {'max':>9}  site")
-    for site, durs in sorted(holds_by_site.items(), key=lambda kv: -sum(kv[1]))[:top]:
-        print(
-            f"{len(durs):>10,} {sum(durs) / 1e6:>9.2f} {us(pct(durs, 0.5)):>8} {us(pct(durs, 0.99)):>8} {us(max(durs)):>9}  {ledger.site(site)}"
-        )
+    print(f"{'count':>12} {'total ms':>10} {'p50':>8} {'p99':>8} {'max':>9}  site")
+    for site, h in sorted(holds.items(), key=lambda kv: -kv[1].total)[:top]:
+        print(f"{h.count:>12,} {h.total / 1e6:>10.2f} {us(h.pct(0.5)):>8} {us(h.pct(0.99)):>8} {us(h.max):>9}  {ledger.site(site)}")
 
-    if misses:
+    if miss_pairs:
         print(f"\n== Try-lock misses: waiter site <- holder site (top {top}) ==")
-        pairs = Counter((e.site, e.other_site) for e in misses)
-        for (waiter, holder), n in pairs.most_common(top):
-            print(f"{n:>8,}  {ledger.site(waiter)}\n          <- {ledger.site(holder)}")
+        for (waiter, holder), n in miss_pairs.most_common(top):
+            print(f"{n:>10,}  {ledger.site(waiter)}\n            <- {ledger.site(holder)}")
         print(f"\n== Try-lock misses by thread pair (top {top}) ==")
-        threads = Counter((e.thread, e.other_thread) for e in misses)
-        for (waiter, holder), n in threads.most_common(top):
-            print(f"{n:>8,}  {ledger.thread(waiter)} <- {ledger.thread(holder)}")
+        for (waiter, holder), n in miss_threads.most_common(top):
+            print(f"{n:>10,}  {ledger.thread(waiter)} <- {ledger.thread(holder)}")
 
     if waits:
         print(f"\n== Blocking waits: waiter site <- holder site (top {top} by total wait) ==")
-        print(f"{'count':>8} {'total ms':>9} {'max µs':>9}")
-        wait_pairs: dict[tuple[int, int], list[int]] = defaultdict(list)
-        for e in waits:
-            wait_pairs[(e.site, e.other_site)].append(e.duration)
-        for (waiter, holder), durs in sorted(wait_pairs.items(), key=lambda kv: -sum(kv[1]))[:top]:
-            print(
-                f"{len(durs):>8,} {sum(durs) / 1e6:>9.2f} {us(max(durs)):>9}  {ledger.site(waiter)}\n"
-                f"{'':>29}<- {ledger.site(holder)}"
-            )
+        print(f"{'count':>10} {'total ms':>9} {'max µs':>9}")
+        for (waiter, holder), h in sorted(waits.items(), key=lambda kv: -kv[1].total)[:top]:
+            print(f"{h.count:>10,} {h.total / 1e6:>9.2f} {us(h.max):>9}  {ledger.site(waiter)}\n{'':>31}<- {ledger.site(holder)}")
 
 
 def timeline(ledger: Ledger, args: argparse.Namespace) -> None:
-    if not ledger.entries:
-        sys.exit("no entries")
-    t0 = ledger.entries[0].timestamp
     mutex = int(args.mutex, 0)
+    picked = sorted((e for e in ledger.entries() if e.mutex == mutex), key=lambda e: e.timestamp)
+    if not picked:
+        sys.exit("no entries for that mutex")
+    t0 = picked[0].timestamp
     start = t0 + int(args.start_ms * 1e6) if args.start_ms is not None else None
     end = t0 + int(args.end_ms * 1e6) if args.end_ms is not None else None
-    for e in ledger.entries:
-        if e.mutex != mutex or (start is not None and e.timestamp < start) or (end is not None and e.timestamp > end):
+    for e in picked:
+        if (start is not None and e.timestamp < start) or (end is not None and e.timestamp > end):
             continue
         t_ms = (e.timestamp - t0) / 1e6
         line = f"{t_ms:12.3f} ms  {ledger.thread(e.thread):<14} {OP_NAMES[e.op]:<7}"
@@ -266,7 +297,8 @@ def dump_csv(ledger: Ledger, args: argparse.Namespace) -> None:
     w.writerow(
         ["timestamp_ns", "thread", "op", "mutex", "mutex_name", "site", "duration_ns", "other_thread", "other_site", "context"]
     )
-    for e in filtered(ledger, args.name):
+    for e in ledger.entries(args.name):
+        other = e.op != OP_RELEASE
         w.writerow(
             [
                 e.timestamp,
@@ -276,8 +308,8 @@ def dump_csv(ledger: Ledger, args: argparse.Namespace) -> None:
                 ledger.mutex_names.get(e.mutex, ""),
                 ledger.site(e.site),
                 e.duration,
-                ledger.thread(e.other_thread) if e.op != OP_RELEASE else "",
-                ledger.site(e.other_site) if e.op != OP_RELEASE else "",
+                ledger.thread(e.other_thread) if other else "",
+                ledger.site(e.other_site) if other else "",
                 f"{e.context:#x}",
             ]
         )
@@ -293,9 +325,9 @@ def main() -> None:
     s.add_argument("--top", type=int, default=15)
     t = sub.add_parser("timeline", help="every event on one mutex, in time order")
     t.add_argument("--mutex", required=True, help="mutex address, e.g. 0x600003e1c000")
-    t.add_argument("--start-ms", type=float, help="offset from the first entry")
+    t.add_argument("--start-ms", type=float, help="offset from the mutex's first entry")
     t.add_argument("--end-ms", type=float)
-    c = sub.add_parser("csv", help="all entries with names resolved")
+    c = sub.add_parser("csv", help="all entries with names resolved, grouped by thread")
     c.add_argument("--name", help="only mutexes with this ledger name")
     args = parser.parse_args()
 
