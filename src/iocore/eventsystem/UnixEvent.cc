@@ -39,6 +39,7 @@ Event::schedule_imm(int acallback_event)
 {
   callback_event = acallback_event;
   ink_assert(ethread == this_ethread());
+  ink_assert(!in_lock_wait);
   if (in_the_priority_queue) {
     ethread->EventQueue.remove(this);
   }
@@ -56,6 +57,7 @@ Event::schedule_at(ink_hrtime atimeout_at, int acallback_event)
 {
   callback_event = acallback_event;
   ink_assert(ethread == this_ethread());
+  ink_assert(!in_lock_wait);
   ink_assert(atimeout_at > 0);
   if (in_the_priority_queue) {
     ethread->EventQueue.remove(this);
@@ -74,6 +76,7 @@ Event::schedule_in(ink_hrtime atimeout_in, int acallback_event)
 {
   callback_event = acallback_event;
   ink_assert(ethread == this_ethread());
+  ink_assert(!in_lock_wait);
   if (in_the_priority_queue) {
     ethread->EventQueue.remove(this);
   }
@@ -91,6 +94,7 @@ Event::schedule_every(ink_hrtime aperiod, int acallback_event)
 {
   callback_event = acallback_event;
   ink_assert(ethread == this_ethread());
+  ink_assert(!in_lock_wait);
   ink_assert(aperiod != 0);
   if (in_the_priority_queue) {
     ethread->EventQueue.remove(this);

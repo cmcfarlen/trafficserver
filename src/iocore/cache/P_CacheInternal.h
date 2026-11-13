@@ -95,6 +95,19 @@ struct EvacuationBlock;
 
 #define CONT_SCHED_LOCK_RETRY(_c) _c->mutex->thread_holding->schedule_in_local(_c, HRTIME_MSECONDS(cache_config_mutex_retry_delay))
 
+/// VC_SCHED_LOCK_RETRY for a miss on stripe->mutex.
+#define VC_SCHED_STRIPE_LOCK_RETRY()                                                      \
+  do {                                                                                    \
+    ts::Metrics::Counter::increment(cache_rsb.stripe_lock_contention);                    \
+    if (stripe && stripe->cache_vol) {                                                    \
+      ts::Metrics::Counter::increment(stripe->cache_vol->vol_rsb.stripe_lock_contention); \
+    }                                                                                     \
+    trigger = cache_sched_stripe_lock_retry(this, stripe->mutex.get());                   \
+    return EVENT_CONT;                                                                    \
+  } while (0)
+
+#define CONT_SCHED_STRIPE_LOCK_RETRY(_c) cache_sched_stripe_lock_retry(_c, (_c)->stripe->mutex.get())
+
 #define VC_SCHED_WRITER_RETRY()                                           \
   do {                                                                    \
     ink_assert(!trigger);                                                 \
@@ -139,6 +152,22 @@ extern int cache_config_hit_evacuate_size_limit;
 extern int cache_config_force_sector_size;
 extern int cache_config_target_fragment_size;
 extern int cache_config_mutex_retry_delay;
+extern int cache_config_stripe_lock_wait;
+
+/** Retry @a c after it missed @a stripe_mutex: with proxy.config.cache.stripe_lock_wait the event loop takes the mutex
+    for it (see EThread::schedule_lock_wait_local), otherwise a mutex_retry_delay timer.
+ */
+inline Event *
+cache_sched_stripe_lock_retry(Continuation *c, ProxyMutex *stripe_mutex, int callback_event = EVENT_INTERVAL)
+{
+  EThread *t = c->mutex->thread_holding;
+  if (cache_config_stripe_lock_wait) {
+    if (Event *e = t->schedule_lock_wait_local(c, stripe_mutex, callback_event); e != nullptr) {
+      return e;
+    }
+  }
+  return t->schedule_in_local(c, HRTIME_MSECONDS(cache_config_mutex_retry_delay), callback_event);
+}
 extern int cache_read_while_writer_retry_delay;
 extern int cache_config_read_while_writer_max_retries;
 
@@ -266,6 +295,9 @@ free_CacheEvacuateDocVC(CacheEvacuateDocVC *cont)
 inline int
 CacheVC::calluser(int event)
 {
+  if (stripe) {
+    Mutex_release_unadopted(stripe->mutex.get(), this_ethread());
+  }
   recursive++;
   ink_assert(!stripe || this_ethread() != stripe->mutex->thread_holding);
   vio.cont->handleEvent(event, &vio);
@@ -280,6 +312,9 @@ CacheVC::calluser(int event)
 inline int
 CacheVC::callcont(int event)
 {
+  if (stripe) {
+    Mutex_release_unadopted(stripe->mutex.get(), this_ethread());
+  }
   recursive++;
   ink_assert(!stripe || this_ethread() != stripe->mutex->thread_holding);
   _action.continuation->handleEvent(event, this);

@@ -190,6 +190,12 @@ public:
 
   int nthread_holding;
 
+  /** Set by the event loop when it takes this mutex for an event that requires it (see @c Event::required_mutex).
+      The handler's first lock of the mutex takes over that hold instead of nesting, so the handler still controls when
+      the mutex is released. Written only by the holding thread.
+   */
+  bool adopt_pending = false;
+
 #if TS_LOCK_SRCLOC
   ink_hrtime     hold_time;
   SourceLocation srcloc;
@@ -374,6 +380,14 @@ Mutex_trylock(
       lock_ledger::on_acquired(m, location, 0, 0);
     }
 #endif
+  } else if (m->adopt_pending) {
+    m->adopt_pending = false;
+#ifdef ENABLE_LOCK_LEDGER
+    if (lock_ledger::enabled_for(m)) {
+      lock_ledger::on_acquired(m, location, 0, 0);
+    }
+#endif
+    return true;
   }
 #if TS_LOCK_SRCLOC
 #ifdef LOCK_CONTENTION_PROFILING
@@ -440,6 +454,14 @@ Mutex_lock(
       lock_ledger::on_acquired(m, location, wait_start, blocker);
     }
 #endif
+  } else if (m->adopt_pending) {
+    m->adopt_pending = false;
+#ifdef ENABLE_LOCK_LEDGER
+    if (lock_ledger::enabled_for(m)) {
+      lock_ledger::on_acquired(m, location, 0, 0);
+    }
+#endif
+    return true;
   }
 #if TS_LOCK_SRCLOC
 #ifdef LOCK_CONTENTION_PROFILING
@@ -502,6 +524,20 @@ inline void
 Mutex_unlock(Ptr<ProxyMutex> &m, EThread *t)
 {
   Mutex_unlock(m.get(), t);
+}
+
+/** Drop the hold the event loop took on @a m for the dispatching event if the handler has not adopted it.
+
+  Call before code that must not run under @a m, such as user callbacks, since a handler re-entered from the top can
+  reach them before its own lock of @a m.
+ */
+inline void
+Mutex_release_unadopted(ProxyMutex *m, EThread *t)
+{
+  if (m->thread_holding == t && m->adopt_pending) {
+    m->adopt_pending = false;
+    Mutex_unlock(m, t);
+  }
 }
 
 class WeakMutexLock

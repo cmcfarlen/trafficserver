@@ -59,6 +59,10 @@ int              thread_max_heartbeat_mseconds = THREAD_MAX_HEARTBEAT_MSECONDS;
 EThreadLoopHooks ethread_loop_hooks;
 int              loop_time_update_probability = 10;
 const ink_hrtime DELAY_FOR_RETRY              = HRTIME_MSECONDS(10);
+// Longest sleep while Events wait on a mutex: nothing signals the release, so the loop polls.
+const ink_hrtime LOCK_WAIT_POLL = HRTIME_MSECONDS(1);
+// Waiters redispatched per mutex per loop pass, so one hot mutex can't monopolize the thread.
+constexpr int LOCK_WAIT_BATCH = 32;
 
 // To define a class inherits from Thread:
 //   1) Define an independent thread_local static member
@@ -153,9 +157,15 @@ EThread::set_event_type(EventType et)
 ink_hrtime
 EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
 {
-  ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue));
+  ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue && !e->in_lock_wait));
+  lock_wait_parked = false;
   WEAK_MUTEX_TRY_LOCK(lock, e->mutex, this);
   if (!lock.is_locked()) {
+    if (e->required_mutex != nullptr) {
+      park_lock_wait(e, lock_wait_redispatch);
+      lock_wait_parked = true;
+      return event_time;
+    }
     e->timeout_at = event_time + DELAY_FOR_RETRY;
     EventQueueExternal.enqueue_local(e);
   } else {
@@ -163,6 +173,17 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
       MUTEX_RELEASE(lock);
       free_event(e);
       return event_time;
+    }
+    // Taken after e->mutex, the order handlers take the two. The handler's own lock of it adopts this hold.
+    ProxyMutex *required = e->required_mutex;
+    if (required != nullptr) {
+      if (!MUTEX_TAKE_TRY_LOCK(required, this)) {
+        MUTEX_RELEASE(lock);
+        park_lock_wait(e, lock_wait_redispatch);
+        lock_wait_parked = true;
+        return event_time;
+      }
+      required->adopt_pending = true;
     }
     Continuation *c_temp = e->continuation;
 
@@ -179,6 +200,10 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
       if (static_cast<int>(generator.random() % 100) < loop_time_update_probability) {
         event_time = ink_get_hrtime();
       }
+    }
+    // A handler that never locked the required mutex leaves the loop's hold behind.
+    if (required != nullptr) {
+      Mutex_release_unadopted(required, this);
     }
     ink_assert(!e->in_the_priority_queue);
     ink_assert(c_temp == e->continuation);
@@ -197,6 +222,77 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
     }
   }
   return event_time;
+}
+
+void
+EThread::park_lock_wait(Event *e, bool at_front)
+{
+  LockWaitList *list = nullptr;
+  for (auto &w : lock_waits) {
+    if (w.mutex == e->required_mutex) {
+      list = &w;
+      break;
+    }
+    if (list == nullptr && w.events.empty()) {
+      list = &w;
+    }
+  }
+  if (list == nullptr) {
+    list = &lock_waits.emplace_back();
+  }
+  list->mutex     = e->required_mutex;
+  e->in_lock_wait = true;
+  if (at_front) {
+    list->events.push(e);
+  } else {
+    list->events.enqueue(e);
+  }
+  ++lock_wait_count;
+}
+
+ink_hrtime
+EThread::process_lock_waits(ink_hrtime event_time)
+{
+  if (lock_wait_count == 0) {
+    return event_time;
+  }
+  lock_wait_redispatch = true;
+  // By index: a handler can park on a new mutex and grow the vector.
+  for (size_t i = 0; i < lock_waits.size(); ++i) {
+    for (int n = 0; n < LOCK_WAIT_BATCH; ++n) {
+      Event *e = lock_waits[i].events.dequeue();
+      if (e == nullptr) {
+        break;
+      }
+      e->in_lock_wait = false;
+      --lock_wait_count;
+      event_time = process_event(e, e->callback_event, event_time);
+      if (lock_wait_parked) {
+        break; // the mutex is still busy; the Event is back at the front
+      }
+    }
+  }
+  lock_wait_redispatch = false;
+  return event_time;
+}
+
+Event *
+EThread::schedule_lock_wait_local(Continuation *c, ProxyMutex *m, int callback_event)
+{
+  if (tt != REGULAR) {
+    return nullptr;
+  }
+  ink_release_assert(this == this_ethread());
+  Event *e = EVENT_ALLOC(eventAllocator, this);
+  e->init(c, 0, 0);
+  e->callback_event     = callback_event;
+  e->required_mutex     = m;
+  e->ethread            = this;
+  e->mutex              = c->mutex;
+  e->globally_allocated = false;
+  c->control_flags.set_flags(get_cont_flags().get_flags());
+  park_lock_wait(e, false);
+  return e;
 }
 
 ink_hrtime
@@ -338,6 +434,8 @@ EThread::fire_ready_events(ink_hrtime loop_start_time)
     }
   }
 
+  result.event_time = process_lock_waits(result.event_time);
+
   return result;
 }
 
@@ -353,6 +451,9 @@ EThread::get_sleep_time(ink_hrtime event_time, Metrics::Slice *current_slice)
       // Because of a missed lock, Timed-Event and Negative-Event have been pushed into localQueue for retry in awhile.
       // Therefore, we have to set the limitation of sleep time in order to handle the next retry in time.
       sleep_time = std::min(sleep_time, DELAY_FOR_RETRY);
+    }
+    if (lock_wait_count > 0) {
+      sleep_time = std::min(sleep_time, LOCK_WAIT_POLL);
     }
     ++(current_slice->_wait);
   } else {

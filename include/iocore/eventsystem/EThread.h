@@ -25,6 +25,7 @@
 #pragma once
 
 #include <atomic>
+#include <vector>
 
 #include "iocore/eventsystem/Thread.h"
 #include "iocore/eventsystem/PriorityEventQueue.h"
@@ -302,6 +303,17 @@ public:
   */
   Event *schedule_spawn(Continuation *c, int ev = EVENT_IMMEDIATE, void *cookie = nullptr);
 
+  /** Dispatch @a callback_event to @a c once this thread can take @a m on its behalf.
+
+    For a continuation that just missed a try-lock of @a m: instead of a retry timer, the Event waits on this thread's
+    lock-wait list, and each loop pass tries @a m once for all of its waiters. The handler then runs with @a m held and
+    its first lock of @a m adopts that hold, so it still decides when @a m is released.
+
+    @pre Called on this thread, which holds @a c's mutex.
+    @return The Event, or @c nullptr on a non-regular thread, where the caller must fall back to a timer.
+  */
+  Event *schedule_lock_wait_local(Continuation *c, ProxyMutex *m, int callback_event = EVENT_INTERVAL);
+
   // Set the tail handler.
   void set_tail_handler(LoopTailHandler *handler);
 
@@ -340,11 +352,28 @@ public:
 
   // Private Interface
 
-  void             execute() override;
-  void             execute_regular();
-  ink_hrtime       process_queue(Que(Event, link) * NegativeQueue, int *ev_count, ink_hrtime event_time);
-  ink_hrtime       process_event(Event *e, int calling_code, ink_hrtime event_time);
-  void             free_event(Event *e);
+  void       execute() override;
+  void       execute_regular();
+  ink_hrtime process_queue(Que(Event, link) * NegativeQueue, int *ev_count, ink_hrtime event_time);
+  ink_hrtime process_event(Event *e, int calling_code, ink_hrtime event_time);
+  void       free_event(Event *e);
+
+  /// Events waiting for one mutex, oldest first.
+  struct LockWaitList {
+    ProxyMutex *mutex;
+    Que(Event, link) events;
+  };
+  /// One entry per mutex this thread has waited on; entries are reused, so the vector stays as small as the set of
+  /// contended mutexes.
+  std::vector<LockWaitList> lock_waits;
+  int                       lock_wait_count = 0;
+  /// True while process_lock_waits redispatches, so an Event that misses again goes back to the front.
+  bool lock_wait_redispatch = false;
+  /// Set when the last process_event call parked its Event instead of dispatching it.
+  bool lock_wait_parked = false;
+
+  void             park_lock_wait(Event *e, bool at_front);
+  ink_hrtime       process_lock_waits(ink_hrtime event_time);
   LoopTailHandler *tail_cb = &DEFAULT_TAIL_HANDLER;
 
 #if HAVE_EVENTFD

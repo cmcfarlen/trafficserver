@@ -431,7 +431,16 @@ public:
   unsigned int immediate             : 1;
   unsigned int globally_allocated    : 1;
   unsigned int in_heap               : 4;
+  unsigned int in_lock_wait          : 1;
   int          callback_event = 0;
+
+  /** A second mutex the event loop takes, after @c mutex, before it calls the handler.
+
+    Set by @c EThread::schedule_lock_wait_local. While the mutex is busy the Event waits on the thread's lock-wait list
+    instead of a timer. The handler's first lock of it adopts the loop's hold (see @c ProxyMutex::adopt_pending). Not
+    reference counted: the mutex must outlive the Event.
+  */
+  ProxyMutex *required_mutex = nullptr;
 
   ink_hrtime timeout_at = 0;
   ink_hrtime period     = 0;
@@ -452,7 +461,15 @@ public:
 
   // Private
 
-  Event() : in_the_prot_queue(false), in_the_priority_queue(false), immediate(false), globally_allocated(true), in_heap(false) {}
+  Event()
+    : in_the_prot_queue(false),
+      in_the_priority_queue(false),
+      immediate(false),
+      globally_allocated(true),
+      in_heap(false),
+      in_lock_wait(false)
+  {
+  }
 
   Event *
   init(Continuation *c, ink_hrtime atimeout_at = 0, ink_hrtime aperiod = 0)

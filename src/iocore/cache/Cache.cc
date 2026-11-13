@@ -83,6 +83,7 @@ int     cache_config_enable_checksum                     = 0;
 int     cache_config_alt_rewrite_max_size                = 4096;
 int     cache_config_read_while_writer                   = 0;
 int     cache_config_mutex_retry_delay                   = 2;
+int     cache_config_stripe_lock_wait                    = 0;
 int     cache_read_while_writer_retry_delay              = 50;
 int     cache_config_read_while_writer_max_retries       = 10;
 int     cache_config_persist_bad_disks                   = false;
@@ -389,7 +390,7 @@ Cache::open_read(Continuation *cont, const CacheKey *key, CacheFragType type, st
       goto Lmiss;
     }
     if (!lock.is_locked()) {
-      CONT_SCHED_LOCK_RETRY(c);
+      CONT_SCHED_STRIPE_LOCK_RETRY(c);
       return &c->_action;
     }
     if (c->od) {
@@ -591,7 +592,7 @@ Cache::open_read(Continuation *cont, const CacheKey *key, CacheHTTPHdr *request,
     }
     if (!lock.is_locked()) {
       SET_CONTINUATION_HANDLER(c, &CacheVC::openReadStartHead);
-      CONT_SCHED_LOCK_RETRY(c);
+      CONT_SCHED_STRIPE_LOCK_RETRY(c);
       return &c->_action;
     }
     if (!c) {
@@ -925,6 +926,7 @@ ink_cache_init(ts::ModuleVersion v)
 
   RecEstablishStaticConfigInt32(cache_config_mutex_retry_delay, "proxy.config.cache.mutex_retry_delay");
   Dbg(dbg_ctl_cache_init, "proxy.config.cache.mutex_retry_delay = %dms", cache_config_mutex_retry_delay);
+  RecEstablishStaticConfigInt32(cache_config_stripe_lock_wait, "proxy.config.cache.stripe_lock_wait");
 
   RecEstablishStaticConfigInt32(cache_config_read_while_writer_max_retries, "proxy.config.cache.read_while_writer.max_retries");
   Dbg(dbg_ctl_cache_init, "proxy.config.cache.read_while_writer.max_retries = %d", cache_config_read_while_writer_max_retries);

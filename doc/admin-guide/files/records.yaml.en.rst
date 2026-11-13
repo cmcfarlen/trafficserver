@@ -3630,6 +3630,15 @@ Cache Control
    used from the asynchronous IO threads when IO finishes and the ``CacheVC`` lock or stripe lock is
    required.
 
+.. ts:cv:: CONFIG proxy.config.cache.stripe_lock_wait INT 0
+   :reloadable:
+
+   When ``1``, a cache read that misses its stripe lock waits on the event thread instead of retrying
+   after :ts:cv:`proxy.config.cache.mutex_retry_delay`. The event thread tries the stripe lock once
+   per loop iteration for all of its waiting reads and runs each one with the lock already held,
+   which avoids repeated failed lock attempts when many requests read the same object. Cache writes
+   still use the retry delay. Experimental.
+
 .. ts:cv:: CONFIG proxy.config.cache.max_disk_errors INT 5
 
    Cache disks sometimes fail due to hardware problems.  |TS| keeps count of
