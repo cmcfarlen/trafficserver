@@ -49,8 +49,8 @@ FILE_VERSION = 1
 ENTRY = struct.Struct("<qQQIIIHH")
 assert ENTRY.size == 40
 
-OP_MISS, OP_WAIT, OP_RELEASE = 1, 2, 3
-OP_NAMES = {OP_MISS: "MISS", OP_WAIT: "WAIT", OP_RELEASE: "RELEASE"}
+OP_MISS, OP_WAIT, OP_RELEASE, OP_PARKED = 1, 2, 3, 4
+OP_NAMES = {OP_MISS: "MISS", OP_WAIT: "WAIT", OP_RELEASE: "RELEASE", OP_PARKED: "PARKED"}
 
 FILE_RE = re.compile(r"lockledger\.(\d+)\.(\d+)\.bin$")
 
@@ -95,12 +95,16 @@ class Ledger:
         name = self.mutex_names.get(addr)
         return f"{name}@{addr:#x}" if name else f"{addr:#x}"
 
-    def entries(self, name: str | None = None) -> Iterator[Entry]:
-        """Entries file by file, each file in time order (not globally sorted)."""
+    def entries(self, name: str | None = None, exclude: str | None = None) -> Iterator[Entry]:
+        """Entries file by file, each file in time order (not globally sorted).
+
+        @a name keeps only mutexes with that ledger name; @a exclude drops them.
+        """
         for path in self.files:
             for tid, data in self._chunks(path, defs_only=False):
                 for fields in ENTRY.iter_unpack(data):
-                    if name is None or self.mutex_names.get(fields[1]) == name:
+                    mname = self.mutex_names.get(fields[1])
+                    if (name is None or mname == name) and (exclude is None or mname != exclude):
                         yield Entry(*fields, tid)
 
     def _chunks(self, path: Path, defs_only: bool) -> Iterator[tuple[int, memoryview]]:
@@ -213,9 +217,10 @@ def summary(ledger: Ledger, args: argparse.Namespace) -> None:
     miss_pairs: Counter[tuple[int, int]] = Counter()
     miss_threads: Counter[tuple[int, int]] = Counter()
     waits: dict[tuple[int, int], Histogram] = defaultdict(Histogram)
+    parked: dict[int, Histogram] = defaultdict(Histogram)
     n_release = n_miss = n_wait = 0
 
-    for e in ledger.entries(args.name):
+    for e in ledger.entries(args.name, args.exclude):
         ts = e.timestamp
         if first is None or ts < first:
             first = ts
@@ -227,6 +232,9 @@ def summary(ledger: Ledger, args: argparse.Namespace) -> None:
             row[0] += 1
             row[1] += e.duration
             holds[e.site].add(e.duration)
+        elif e.op == OP_PARKED:
+            parked[e.mutex].add(e.duration)
+            continue
         elif e.op == OP_MISS:
             n_miss += 1
             row[2] += 1
@@ -263,6 +271,15 @@ def summary(ledger: Ledger, args: argparse.Namespace) -> None:
         for (waiter, holder), n in miss_threads.most_common(top):
             print(f"{n:>10,}  {ledger.thread(waiter)} <- {ledger.thread(holder)}")
 
+    if parked:
+        print(f"\n== Parked waits (stripe_lock_wait), µs, by mutex (top {top} by total) ==")
+        print(f"{'mutex':<28} {'count':>10} {'total ms':>10} {'p50':>8} {'p99':>9} {'p99.9':>9} {'max':>10}")
+        for addr, h in sorted(parked.items(), key=lambda kv: -kv[1].total)[:top]:
+            print(
+                f"{ledger.mutex(addr):<28} {h.count:>10,} {h.total / 1e6:>10.2f} {us(h.pct(0.5)):>8} {us(h.pct(0.99)):>9} "
+                f"{us(h.pct(0.999)):>9} {us(h.max):>10}"
+            )
+
     if waits:
         print(f"\n== Blocking waits: waiter site <- holder site (top {top} by total wait) ==")
         print(f"{'count':>10} {'total ms':>9} {'max µs':>9}")
@@ -285,6 +302,8 @@ def timeline(ledger: Ledger, args: argparse.Namespace) -> None:
         line = f"{t_ms:12.3f} ms  {ledger.thread(e.thread):<14} {OP_NAMES[e.op]:<7}"
         if e.op == OP_RELEASE:
             line += f" held {us(e.duration):>9} µs  {ledger.site(e.site)}"
+        elif e.op == OP_PARKED:
+            line += f" parked {us(e.duration):>7} µs  {ledger.site(e.site)}"
         else:
             if e.op == OP_WAIT:
                 line += f" waited {us(e.duration):>7} µs"
@@ -298,7 +317,7 @@ def dump_csv(ledger: Ledger, args: argparse.Namespace) -> None:
         ["timestamp_ns", "thread", "op", "mutex", "mutex_name", "site", "duration_ns", "other_thread", "other_site", "context"]
     )
     for e in ledger.entries(args.name):
-        other = e.op != OP_RELEASE
+        other = e.op not in (OP_RELEASE, OP_PARKED)
         w.writerow(
             [
                 e.timestamp,
@@ -322,6 +341,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("summary", help="contention report")
     s.add_argument("--name", help="only mutexes with this ledger name, e.g. stripe")
+    s.add_argument("--exclude", help="drop mutexes with this ledger name, e.g. stripe to see every other lock")
     s.add_argument("--top", type=int, default=15)
     t = sub.add_parser("timeline", help="every event on one mutex, in time order")
     t.add_argument("--mutex", required=True, help="mutex address, e.g. 0x600003e1c000")

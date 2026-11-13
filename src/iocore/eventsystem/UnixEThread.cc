@@ -184,6 +184,12 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
         return event_time;
       }
       required->adopt_pending = true;
+#ifdef ENABLE_LOCK_LEDGER
+      if (e->lock_wait_since != 0) {
+        lock_ledger::on_parked(required, MakeSourceLocation(), e->lock_wait_since);
+        e->lock_wait_since = 0;
+      }
+#endif
     }
     Continuation *c_temp = e->continuation;
 
@@ -242,6 +248,11 @@ EThread::park_lock_wait(Event *e, bool at_front)
   }
   list->mutex     = e->required_mutex;
   e->in_lock_wait = true;
+#ifdef ENABLE_LOCK_LEDGER
+  if (e->lock_wait_since == 0 && lock_ledger::enabled_for(e->required_mutex)) {
+    e->lock_wait_since = ink_get_hrtime();
+  }
+#endif
   if (at_front) {
     list->events.push(e);
   } else {

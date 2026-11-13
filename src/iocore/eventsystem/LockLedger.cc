@@ -55,6 +55,7 @@ namespace
     OP_MISS    = 1, ///< Try-lock failed; other_* is the holder seen at that moment.
     OP_WAIT    = 2, ///< Blocking acquire had to wait @c duration ns; other_* is the holder when the wait began.
     OP_RELEASE = 3, ///< Outermost unlock; @c site is where it was acquired and @c duration the hold time.
+    OP_PARKED  = 4, ///< The loop took the mutex for a parked Event; @c duration is how long it was parked.
   };
 
   struct Entry {
@@ -445,6 +446,16 @@ on_acquired(ProxyMutex *m, const SourceLocation &loc, ink_hrtime wait_start, uin
     e.other_thread = static_cast<uint16_t>(blocker >> 32);
     tl.emit(e);
   }
+}
+
+void
+on_parked(ProxyMutex *m, const SourceLocation &loc, ink_hrtime since)
+{
+  auto   &tl  = local();
+  int64_t now = ink_get_hrtime();
+  Entry   e   = make_entry(OP_PARKED, m, now, tl.site_for(loc));
+  e.duration  = saturate(now - since);
+  tl.emit(e);
 }
 
 void

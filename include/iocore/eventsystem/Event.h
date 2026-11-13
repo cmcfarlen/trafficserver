@@ -442,6 +442,11 @@ public:
   */
   ProxyMutex *required_mutex = nullptr;
 
+#ifdef ENABLE_LOCK_LEDGER
+  /// When this Event first parked on @c required_mutex, for the lock ledger; 0 when not parked.
+  ink_hrtime lock_wait_since = 0;
+#endif
+
   ink_hrtime timeout_at = 0;
   ink_hrtime period     = 0;
 

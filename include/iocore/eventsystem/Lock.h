@@ -296,6 +296,8 @@ void on_miss(ProxyMutex *m, const SourceLocation &loc);
 /// @a wait_start is when a blocking acquire began waiting, 0 if it did not wait; @a blocker is the holder seen then.
 void on_acquired(ProxyMutex *m, const SourceLocation &loc, ink_hrtime wait_start, uint64_t blocker);
 void on_release(ProxyMutex *m);
+/// The event loop took @a m for an Event parked on it since @a since (see EThread::schedule_lock_wait_local).
+void on_parked(ProxyMutex *m, const SourceLocation &loc, ink_hrtime since);
 
 class ContextScope
 {
