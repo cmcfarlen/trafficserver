@@ -371,6 +371,8 @@ public:
   bool lock_wait_redispatch = false;
   /// Set when the last process_event call parked its Event instead of dispatching it.
   bool lock_wait_parked = false;
+  /// The required mutex that was busy when the last process_event call parked its Event, or null if its own mutex was.
+  ProxyMutex *lock_wait_busy = nullptr;
 
   void             park_lock_wait(Event *e, bool at_front);
   ink_hrtime       process_lock_waits(ink_hrtime event_time);

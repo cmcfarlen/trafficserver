@@ -63,6 +63,39 @@ const ink_hrtime DELAY_FOR_RETRY              = HRTIME_MSECONDS(10);
 const ink_hrtime LOCK_WAIT_POLL = HRTIME_MSECONDS(1);
 // Waiters redispatched per mutex per loop pass, so one hot mutex can't monopolize the thread.
 constexpr int LOCK_WAIT_BATCH = 32;
+// A busy mutex is usually held for about a microsecond, far less than a loop pass, so a waiter spins briefly for it
+// before deferring to the next pass; the total per mutex per pass is capped so a long hold still falls back.
+const ink_hrtime LOCK_WAIT_SPIN       = HRTIME_USECONDS(2);
+const ink_hrtime LOCK_WAIT_SPIN_TOTAL = HRTIME_USECONDS(20);
+
+namespace
+{
+void
+cpu_pause()
+{
+#if defined(__x86_64__) || defined(__i386__)
+  __builtin_ia32_pause();
+#elif defined(__aarch64__)
+  asm volatile("yield");
+#endif
+}
+
+// Spin until @a m looks free or @a budget runs out. Only reads, so a spinner never takes the line exclusive.
+bool
+spin_until_free(ProxyMutex *m, ink_hrtime budget)
+{
+  ink_hrtime const deadline = ink_get_hrtime() + budget;
+  for (int i = 1;; ++i) {
+    if (__atomic_load_n(&m->thread_holding, __ATOMIC_RELAXED) == nullptr) {
+      return true;
+    }
+    cpu_pause();
+    if ((i & 15) == 0 && ink_get_hrtime() >= deadline) {
+      return false;
+    }
+  }
+}
+} // namespace
 
 // To define a class inherits from Thread:
 //   1) Define an independent thread_local static member
@@ -159,6 +192,7 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
 {
   ink_assert((!e->in_the_prot_queue && !e->in_the_priority_queue && !e->in_lock_wait));
   lock_wait_parked = false;
+  lock_wait_busy   = nullptr;
   WEAK_MUTEX_TRY_LOCK(lock, e->mutex, this);
   if (!lock.is_locked()) {
     if (e->required_mutex != nullptr) {
@@ -181,6 +215,7 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
         MUTEX_RELEASE(lock);
         park_lock_wait(e, lock_wait_redispatch);
         lock_wait_parked = true;
+        lock_wait_busy   = required;
         return event_time;
       }
       required->adopt_pending = true;
@@ -270,6 +305,7 @@ EThread::process_lock_waits(ink_hrtime event_time)
   lock_wait_redispatch = true;
   // By index: a handler can park on a new mutex and grow the vector.
   for (size_t i = 0; i < lock_waits.size(); ++i) {
+    ink_hrtime spun = 0;
     for (int n = 0; n < LOCK_WAIT_BATCH; ++n) {
       Event *e = lock_waits[i].events.dequeue();
       if (e == nullptr) {
@@ -279,7 +315,17 @@ EThread::process_lock_waits(ink_hrtime event_time)
       --lock_wait_count;
       event_time = process_event(e, e->callback_event, event_time);
       if (lock_wait_parked) {
-        break; // the mutex is still busy; the Event is back at the front
+        // Back at the front. Retry it if the mutex frees up within the spin budget, else leave it for the next pass.
+        if (lock_wait_busy == nullptr || spun >= LOCK_WAIT_SPIN_TOTAL) {
+          break;
+        }
+        ink_hrtime const start  = ink_get_hrtime();
+        bool const       freed  = spin_until_free(lock_wait_busy, std::min(LOCK_WAIT_SPIN, LOCK_WAIT_SPIN_TOTAL - spun));
+        spun                   += ink_get_hrtime() - start;
+        if (!freed) {
+          break;
+        }
+        --n; // the retry doesn't count against the batch
       }
     }
   }
