@@ -362,6 +362,8 @@ public:
   struct LockWaitList {
     ProxyMutex *mutex;
     Que(Event, link) events;
+    /// This thread's bit is set in mutex->lock_wait_threads.
+    bool flagged = false;
   };
   /// One entry per mutex this thread has waited on; entries are reused, so the vector stays as small as the set of
   /// contended mutexes.
@@ -374,8 +376,24 @@ public:
   /// The required mutex that was busy when the last process_event call parked its Event, or null if its own mutex was.
   ProxyMutex *lock_wait_busy = nullptr;
 
-  void             park_lock_wait(Event *e, bool at_front);
-  ink_hrtime       process_lock_waits(ink_hrtime event_time);
+  void       park_lock_wait(Event *e, bool at_front);
+  ink_hrtime process_lock_waits(ink_hrtime event_time);
+
+  /// This thread's bit in ProxyMutex::lock_wait_threads: 0-63 once assigned, -1 when there are more threads than
+  /// bits (that thread polls instead), -2 before first use.
+  int      lock_wait_slot = -2;
+  uint64_t lock_wait_bit();
+  /// True from just before this thread may block with parked Events until it wakes. The first releaser that sees it
+  /// clears it and signals the thread, so each sleep gets at most one wake.
+  std::atomic<bool> lock_wait_sleeping{false};
+  /// True if a mutex this thread waits on looks free; checked after setting lock_wait_sleeping, before sleeping.
+  bool lock_wait_any_free();
+  // Per-thread counts, added to the process metrics about once a second.
+  uint64_t         lock_wait_parks   = 0;
+  uint64_t         lock_wait_wakes   = 0;
+  uint64_t         lock_wait_unwoken = 0;
+  ink_hrtime       lock_wait_flushed = 0;
+  void             flush_lock_wait_stats(ink_hrtime now);
   LoopTailHandler *tail_cb = &DEFAULT_TAIL_HANDLER;
 
 #if HAVE_EVENTFD

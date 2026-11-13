@@ -196,6 +196,11 @@ public:
 
   /// Event threads currently spinning for this mutex to redispatch a parked Event (see EThread::process_lock_waits).
   std::atomic<int> lock_wait_spinners{0};
+  /// One bit per event thread (EThread::lock_wait_slot) with Events parked on this mutex. Mutex_unlock wakes one of
+  /// them, so a thread with waiters can sleep instead of polling.
+  std::atomic<uint64_t> lock_wait_threads{0};
+  /// Slot to start from when choosing which waiting thread to wake, so wakes rotate across threads.
+  std::atomic<uint8_t> lock_wait_cursor{0};
 
 #if TS_LOCK_SRCLOC
   ink_hrtime     hold_time;
@@ -491,6 +496,9 @@ Mutex_lock(
     m.get(), t);
 }
 
+/// Wake one sleeping thread that has Events parked on @a m; called by the releasing thread @a t after unlocking.
+void lock_wait_wake(ProxyMutex *m, EThread *t);
+
 inline void
 Mutex_unlock(ProxyMutex *m, EThread *t)
 {
@@ -519,6 +527,9 @@ Mutex_unlock(ProxyMutex *m, EThread *t)
       ink_assert(m->thread_holding);
       m->thread_holding = nullptr;
       ink_mutex_release(&m->the_mutex);
+      if (m->lock_wait_threads.load(std::memory_order_relaxed) != 0) [[unlikely]] {
+        lock_wait_wake(m, t);
+      }
     }
   }
 }

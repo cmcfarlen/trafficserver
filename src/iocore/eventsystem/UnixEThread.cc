@@ -22,6 +22,7 @@
  */
 
 #include <typeinfo>
+#include <bit>
 #include <chrono>
 
 #include <tscore/TSSystemState.h>
@@ -59,8 +60,10 @@ int              thread_max_heartbeat_mseconds = THREAD_MAX_HEARTBEAT_MSECONDS;
 EThreadLoopHooks ethread_loop_hooks;
 int              loop_time_update_probability = 10;
 const ink_hrtime DELAY_FOR_RETRY              = HRTIME_MSECONDS(10);
-// Longest sleep while Events wait on a mutex: nothing signals the release, so the loop polls.
-const ink_hrtime LOCK_WAIT_POLL = HRTIME_MSECONDS(1);
+// Longest sleep while Events wait on a mutex. A thread with a lock_wait_slot is woken by the releaser, so its limit only
+// bounds a missed wake; a thread without one polls.
+const ink_hrtime LOCK_WAIT_POLL     = HRTIME_MSECONDS(1);
+const ink_hrtime LOCK_WAIT_FALLBACK = HRTIME_MSECONDS(10);
 // Waiters redispatched per mutex per loop pass, so one hot mutex can't monopolize the thread.
 constexpr int LOCK_WAIT_BATCH = 32;
 // A busy mutex is usually held for about a microsecond, far less than a loop pass, so a waiter spins briefly for it
@@ -73,6 +76,24 @@ constexpr int LOCK_WAIT_MAX_SPINNERS = 1;
 
 namespace
 {
+std::atomic<int>       lock_wait_next_slot{0};
+std::atomic<EThread *> lock_wait_slot_threads[64];
+
+struct LockWaitMetrics {
+  ts::Metrics::Counter::AtomicType *parks;
+  ts::Metrics::Counter::AtomicType *wakes;
+  ts::Metrics::Counter::AtomicType *unwoken;
+};
+
+LockWaitMetrics &
+lock_wait_metrics()
+{
+  static LockWaitMetrics m{ts::Metrics::Counter::createPtr("proxy.process.eventloop.lock_wait.parks"),
+                           ts::Metrics::Counter::createPtr("proxy.process.eventloop.lock_wait.wakes"),
+                           ts::Metrics::Counter::createPtr("proxy.process.eventloop.lock_wait.unwoken_sleeps")};
+  return m;
+}
+
 void
 cpu_pause()
 {
@@ -268,6 +289,76 @@ EThread::process_event(Event *e, int calling_code, ink_hrtime event_time)
   return event_time;
 }
 
+uint64_t
+EThread::lock_wait_bit()
+{
+  if (lock_wait_slot == -2) {
+    int slot = lock_wait_next_slot.fetch_add(1, std::memory_order_relaxed);
+    if (slot < 64) {
+      lock_wait_slot_threads[slot].store(this, std::memory_order_release);
+      lock_wait_slot = slot;
+    } else {
+      lock_wait_slot = -1;
+    }
+  }
+  return lock_wait_slot >= 0 ? uint64_t{1} << lock_wait_slot : 0;
+}
+
+bool
+EThread::lock_wait_any_free()
+{
+  for (auto &w : lock_waits) {
+    if (!w.events.empty() && __atomic_load_n(&w.mutex->thread_holding, __ATOMIC_RELAXED) == nullptr) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void
+EThread::flush_lock_wait_stats(ink_hrtime now)
+{
+  if (now - lock_wait_flushed < HRTIME_SECOND) {
+    return;
+  }
+  lock_wait_flushed = now;
+  if (lock_wait_parks == 0 && lock_wait_wakes == 0 && lock_wait_unwoken == 0) {
+    return;
+  }
+  auto &m = lock_wait_metrics();
+  ts::Metrics::Counter::increment(m.parks, lock_wait_parks);
+  ts::Metrics::Counter::increment(m.wakes, lock_wait_wakes);
+  ts::Metrics::Counter::increment(m.unwoken, lock_wait_unwoken);
+  lock_wait_parks = lock_wait_wakes = lock_wait_unwoken = 0;
+}
+
+void
+lock_wait_wake(ProxyMutex *m, EThread *t)
+{
+  // Pairs with the fence after lock_wait_sleeping is set in execute_regular: either the sleeper sees the mutex free,
+  // or this sees the sleeper.
+  std::atomic_thread_fence(std::memory_order_seq_cst);
+  uint64_t mask = m->lock_wait_threads.load(std::memory_order_relaxed);
+  if (t != nullptr && t->lock_wait_slot >= 0) {
+    mask &= ~(uint64_t{1} << t->lock_wait_slot); // our own waiters run at the end of this pass
+  }
+  if (mask == 0) {
+    return;
+  }
+  unsigned const start = m->lock_wait_cursor.load(std::memory_order_relaxed) & 63;
+  unsigned const slot  = (start + std::countr_zero(std::rotr(mask, static_cast<int>(start)))) & 63;
+  m->lock_wait_cursor.store(static_cast<uint8_t>(slot + 1), std::memory_order_relaxed);
+  EThread *target = lock_wait_slot_threads[slot].load(std::memory_order_acquire);
+  // An awake waiter retries on its next pass, so only a sleeper needs the syscall.
+  if (target != nullptr && target->lock_wait_sleeping.load(std::memory_order_relaxed) &&
+      target->lock_wait_sleeping.exchange(false, std::memory_order_acq_rel)) {
+    target->tail_cb->signalActivity();
+    if (t != nullptr && t == this_ethread()) {
+      ++t->lock_wait_wakes;
+    }
+  }
+}
+
 void
 EThread::park_lock_wait(Event *e, bool at_front)
 {
@@ -286,6 +377,13 @@ EThread::park_lock_wait(Event *e, bool at_front)
   }
   list->mutex     = e->required_mutex;
   e->in_lock_wait = true;
+  if (list->events.empty() && !list->flagged) {
+    if (uint64_t bit = lock_wait_bit(); bit != 0) {
+      list->mutex->lock_wait_threads.fetch_or(bit, std::memory_order_seq_cst);
+      list->flagged = true;
+    }
+  }
+  ++lock_wait_parks;
 #ifdef ENABLE_LOCK_LEDGER
   if (e->lock_wait_since == 0 && lock_ledger::enabled_for(e->required_mutex)) {
     e->lock_wait_since = ink_get_hrtime();
@@ -336,6 +434,11 @@ EThread::process_lock_waits(ink_hrtime event_time)
         }
         --n; // the retry doesn't count against the batch
       }
+    }
+    auto &w = lock_waits[i];
+    if (w.flagged && w.events.empty()) {
+      w.mutex->lock_wait_threads.fetch_and(~lock_wait_bit(), std::memory_order_relaxed);
+      w.flagged = false;
     }
   }
   lock_wait_redispatch = false;
@@ -444,7 +547,25 @@ EThread::execute_regular()
     // The watchdog heartbeat is kicked inside the tail handler, bracketing only the blocking poll -
     // see Watchdog::SleepScope. Most of waitForActivity is dispatch work, not sleep, so timestamping
     // around this call would attribute the busiest part of the loop to being asleep.
+    // Publish that this thread may sleep with parked Events, then re-check: a release between our last try and here
+    // either sees the flag and wakes us, or we see the mutex free and skip the sleep.
+    bool lock_wait_sleep = false;
+    if (lock_wait_count > 0 && sleep_time > 0 && lock_wait_slot >= 0) {
+      lock_wait_sleeping.store(true, std::memory_order_relaxed);
+      std::atomic_thread_fence(std::memory_order_seq_cst);
+      if (lock_wait_any_free()) {
+        lock_wait_sleeping.store(false, std::memory_order_relaxed);
+        sleep_time = 0;
+      } else {
+        lock_wait_sleep = true;
+      }
+    }
+
     tail_cb->waitForActivity(sleep_time);
+
+    if (lock_wait_sleep && lock_wait_sleeping.exchange(false, std::memory_order_relaxed)) {
+      ++lock_wait_unwoken; // no release woke us: a timeout, or other work arrived
+    }
 
     // loop cleanup
     loop_finish_time = ink_get_hrtime();
@@ -456,6 +577,7 @@ EThread::execute_regular()
 
     metrics.decay();
     metrics.record_loop_time(delta);
+    flush_lock_wait_stats(loop_finish_time);
     current_slice->record_event_count(statistics.ev_count);
     current_slice->record_drain_queue(drain_queue);
   }
@@ -519,7 +641,7 @@ EThread::get_sleep_time(ink_hrtime event_time, Metrics::Slice *current_slice)
       sleep_time = std::min(sleep_time, DELAY_FOR_RETRY);
     }
     if (lock_wait_count > 0) {
-      sleep_time = std::min(sleep_time, LOCK_WAIT_POLL);
+      sleep_time = std::min(sleep_time, lock_wait_slot >= 0 ? LOCK_WAIT_FALLBACK : LOCK_WAIT_POLL);
     }
     ++(current_slice->_wait);
   } else {
