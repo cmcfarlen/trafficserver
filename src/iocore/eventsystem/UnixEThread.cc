@@ -67,6 +67,9 @@ constexpr int LOCK_WAIT_BATCH = 32;
 // before deferring to the next pass; the total per mutex per pass is capped so a long hold still falls back.
 const ink_hrtime LOCK_WAIT_SPIN       = HRTIME_USECONDS(2);
 const ink_hrtime LOCK_WAIT_SPIN_TOTAL = HRTIME_USECONDS(20);
+// Spinners per mutex. When every thread waits on one mutex, their reads of its cache line slow the holder; the rest
+// defer to the next pass instead.
+constexpr int LOCK_WAIT_MAX_SPINNERS = 1;
 
 namespace
 {
@@ -319,9 +322,15 @@ EThread::process_lock_waits(ink_hrtime event_time)
         if (lock_wait_busy == nullptr || spun >= LOCK_WAIT_SPIN_TOTAL) {
           break;
         }
+        ProxyMutex *busy = lock_wait_busy;
+        if (busy->lock_wait_spinners.fetch_add(1, std::memory_order_relaxed) >= LOCK_WAIT_MAX_SPINNERS) {
+          busy->lock_wait_spinners.fetch_sub(1, std::memory_order_relaxed);
+          break;
+        }
         ink_hrtime const start  = ink_get_hrtime();
-        bool const       freed  = spin_until_free(lock_wait_busy, std::min(LOCK_WAIT_SPIN, LOCK_WAIT_SPIN_TOTAL - spun));
+        bool const       freed  = spin_until_free(busy, std::min(LOCK_WAIT_SPIN, LOCK_WAIT_SPIN_TOTAL - spun));
         spun                   += ink_get_hrtime() - start;
+        busy->lock_wait_spinners.fetch_sub(1, std::memory_order_relaxed);
         if (!freed) {
           break;
         }

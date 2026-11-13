@@ -27,9 +27,7 @@
 #include "tscore/Diags.h"
 #include "iocore/eventsystem/Thread.h"
 
-#ifdef ENABLE_LOCK_LEDGER
 #include <atomic>
-#endif
 
 // Lock call sites carry their source location in debug builds and whenever the lock ledger is compiled in.
 #if defined(DEBUG) || defined(ENABLE_LOCK_LEDGER)
@@ -195,6 +193,9 @@ public:
       the mutex is released. Written only by the holding thread.
    */
   bool adopt_pending = false;
+
+  /// Event threads currently spinning for this mutex to redispatch a parked Event (see EThread::process_lock_waits).
+  std::atomic<int> lock_wait_spinners{0};
 
 #if TS_LOCK_SRCLOC
   ink_hrtime     hold_time;
