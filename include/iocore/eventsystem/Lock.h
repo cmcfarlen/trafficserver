@@ -806,6 +806,25 @@ public:
     lock_acquired = false;
   }
 
+  /** Leave the mutex held for the next handler this thread runs, whose first lock of it adopts the hold.
+
+    Only an outermost hold is handed off; a nested one is released as usual. The caller calls Mutex_release_unadopted
+    once the handler returns, for handlers that end without locking the mutex.
+
+    @return Whether the hold was handed off.
+   */
+  bool
+  hand_off()
+  {
+    if (!lock_acquired || m->nthread_holding != 1) {
+      release();
+      return false;
+    }
+    m->adopt_pending = true;
+    lock_acquired    = false;
+    return true;
+  }
+
   bool
   is_locked() const
   {

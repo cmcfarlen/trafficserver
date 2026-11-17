@@ -153,6 +153,7 @@ extern int cache_config_force_sector_size;
 extern int cache_config_target_fragment_size;
 extern int cache_config_mutex_retry_delay;
 extern int cache_config_stripe_lock_wait;
+extern int cache_config_stripe_lock_trim;
 
 /** Retry @a c after it missed @a stripe_mutex: with proxy.config.cache.stripe_lock_wait the event loop takes the mutex
     for it (see EThread::schedule_lock_wait_local), otherwise a mutex_retry_delay timer.
