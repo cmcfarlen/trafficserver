@@ -73,6 +73,10 @@ const ink_hrtime LOCK_WAIT_SPIN_TOTAL = HRTIME_USECONDS(20);
 // Spinners per mutex. When every thread waits on one mutex, their reads of its cache line slow the holder; the rest
 // defer to the next pass instead.
 constexpr int LOCK_WAIT_MAX_SPINNERS = 1;
+// Minimum time between wakes for one mutex. On a mutex every thread waits on, nearly every release finds a sleeper,
+// and a wake per release costs more in eventfd writes and loop passes than it saves; between wakes, awake waiters
+// and the spinner take the mutex.
+const ink_hrtime LOCK_WAIT_WAKE_HOLDOFF = HRTIME_USECONDS(100);
 
 namespace
 {
@@ -345,6 +349,10 @@ lock_wait_wake(ProxyMutex *m, EThread *t)
   if (mask == 0) {
     return;
   }
+  ink_hrtime const now = ink_get_hrtime();
+  if (now - m->lock_wait_woken_at.load(std::memory_order_relaxed) < LOCK_WAIT_WAKE_HOLDOFF) {
+    return;
+  }
   unsigned const start = m->lock_wait_cursor.load(std::memory_order_relaxed) & 63;
   unsigned const slot  = (start + std::countr_zero(std::rotr(mask, static_cast<int>(start)))) & 63;
   m->lock_wait_cursor.store(static_cast<uint8_t>(slot + 1), std::memory_order_relaxed);
@@ -352,6 +360,7 @@ lock_wait_wake(ProxyMutex *m, EThread *t)
   // An awake waiter retries on its next pass, so only a sleeper needs the syscall.
   if (target != nullptr && target->lock_wait_sleeping.load(std::memory_order_relaxed) &&
       target->lock_wait_sleeping.exchange(false, std::memory_order_acq_rel)) {
+    m->lock_wait_woken_at.store(now, std::memory_order_relaxed);
     target->tail_cb->signalActivity();
     if (t != nullptr && t == this_ethread()) {
       ++t->lock_wait_wakes;

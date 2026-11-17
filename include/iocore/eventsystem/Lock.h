@@ -201,6 +201,8 @@ public:
   std::atomic<uint64_t> lock_wait_threads{0};
   /// Slot to start from when choosing which waiting thread to wake, so wakes rotate across threads.
   std::atomic<uint8_t> lock_wait_cursor{0};
+  /// When a release last woke a waiting thread; further releases skip the wake for a short holdoff.
+  std::atomic<ink_hrtime> lock_wait_woken_at{0};
 
 #if TS_LOCK_SRCLOC
   ink_hrtime     hold_time;
