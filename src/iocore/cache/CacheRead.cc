@@ -225,7 +225,7 @@ CacheVC::openReadFromWriter(int event, Event *e)
   }
   CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
   if (!lock.is_locked()) {
-    VC_SCHED_LOCK_RETRY();
+    VC_SCHED_STRIPE_LOCK_RETRY();
   }
   od = stripe->open_read(&first_key); // recheck in case the lock failed
   if (!od) {
@@ -450,7 +450,7 @@ CacheVC::openReadClose(int event, Event * /* e ATS_UNUSED */)
   }
   CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
   if (!lock.is_locked()) {
-    VC_SCHED_LOCK_RETRY();
+    VC_SCHED_STRIPE_LOCK_RETRY();
   }
   if (f.hit_evacuate && stripe->dir_valid(&first_dir) && closed > 0) {
     ink_assert(stripe->mutex->thread_holding == this_ethread());
@@ -478,7 +478,7 @@ CacheVC::openReadReadDone(int event, Event *e)
   {
     CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
     if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
+      VC_SCHED_STRIPE_LOCK_RETRY();
     }
     if (event == AIO_EVENT_DONE && !io.ok()) {
       goto Lerror;
@@ -677,7 +677,7 @@ CacheVC::openReadMain(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */)
       CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
       if (!lock.is_locked()) {
         SET_HANDLER(&CacheVC::openReadDirDelete);
-        VC_SCHED_LOCK_RETRY();
+        VC_SCHED_STRIPE_LOCK_RETRY();
       }
 
       stripe->directory.remove(&earliest_key, stripe, &earliest_dir);
@@ -729,7 +729,7 @@ Lread: {
   CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
   if (!lock.is_locked()) {
     SET_HANDLER(&CacheVC::openReadMain);
-    VC_SCHED_LOCK_RETRY();
+    VC_SCHED_STRIPE_LOCK_RETRY();
   }
   if (stripe->directory.probe(&key, stripe, &dir, &last_collision)) {
     SET_HANDLER(&CacheVC::openReadReadDone);
@@ -790,7 +790,7 @@ CacheVC::openReadStartEarliest(int /* event ATS_UNUSED */, Event * /* e ATS_UNUS
   {
     CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
     if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
+      VC_SCHED_STRIPE_LOCK_RETRY();
     }
     if (!buf) {
       goto Lread;
@@ -959,7 +959,7 @@ CacheVC::openReadVecWrite(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED */
   {
     CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
     if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
+      VC_SCHED_STRIPE_LOCK_RETRY();
     }
     if (io.ok()) {
       ink_assert(f.evac_vector);
@@ -1015,7 +1015,7 @@ CacheVC::openReadStartHead(int event, Event *e)
   {
     CACHE_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
     if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
+      VC_SCHED_STRIPE_LOCK_RETRY();
     }
     if (!buf) {
       goto Lread;
@@ -1237,7 +1237,7 @@ CacheVC::openReadDirDelete(int /* event ATS_UNUSED */, Event * /* e ATS_UNUSED *
 {
   MUTEX_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
   if (!lock.is_locked()) {
-    VC_SCHED_LOCK_RETRY();
+    VC_SCHED_STRIPE_LOCK_RETRY();
   }
 
   stripe->directory.remove(&earliest_key, stripe, &earliest_dir);

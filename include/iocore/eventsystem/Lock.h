@@ -27,6 +27,8 @@
 #include "tscore/Diags.h"
 #include "iocore/eventsystem/Thread.h"
 
+#include <atomic>
+
 #define MAX_LOCK_TIME               HRTIME_MSECONDS(200)
 #define THREAD_MUTEX_THREAD_HOLDING (-1024 * 1024)
 
@@ -184,6 +186,9 @@ public:
       controls when the mutex is released. Written only by the holding thread.
    */
   bool adopt_pending = false;
+
+  /// Event threads currently spinning for this mutex to redispatch a parked Event (see EThread::process_lock_waits).
+  std::atomic<int> lock_wait_spinners{0};
 
 #ifdef DEBUG
   ink_hrtime     hold_time;

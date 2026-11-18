@@ -379,7 +379,7 @@ CacheVC::handleReadDone(int event, Event * /* e ATS_UNUSED */)
   {
     MUTEX_TRY_LOCK(lock, stripe->mutex, mutex->thread_holding);
     if (!lock.is_locked()) {
-      VC_SCHED_LOCK_RETRY();
+      VC_SCHED_STRIPE_LOCK_RETRY();
     }
     if ((!stripe->dir_valid(&dir)) || (!io.ok())) {
       if (!io.ok()) {
